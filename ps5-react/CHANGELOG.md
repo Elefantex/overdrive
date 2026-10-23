@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — packages installed from a link
+
+- `Packages.install({url, name, contentId})` (ABI v20) hands an http(s) link to the console's own
+  download queue: the console fetches and installs the package in the background, with the app
+  closed too and no copy on a drive first. A PS4 package needs its content ID, which the app reads
+  from the header with a ranged request; a PS5 one goes without. `pkg-installer.elf` speaks `PKI2`
+  (a fourth line, the content ID) for paths and links alike.
+
 ## Unreleased — certificates for old firmwares
 
 - Networking apps ship Mozilla's root certificates (curl's `cacert.pem`, pinned as `caBundle`). At
