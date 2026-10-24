@@ -294,7 +294,9 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
 
     const strip = /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 14 }, children: [
       /* @__PURE__ */ (0, jsx)(Text, { style: { paddingHorizontal: 6, fontFamily: "Inter-Regular", fontSize: 20, fontWeight: 600, color: colors.subtle, letterSpacing: 1 }, children: t2("add.title") }),
-      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14 }, children: [
+      // The focus ring is drawn 7 px outside the card, and the scroll view clips what it has no room
+      // for: the first card sat flush with its left edge, so the ring was cut and looked broken.
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14, paddingLeft: 12 }, children: [
         /* @__PURE__ */ (0, jsx)(AddCard, { icon: "globe", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
         /* @__PURE__ */ (0, jsx)(AddCard, { icon: "utorrent", title: t2("add.torrent"), detail: routes.length ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: () => card("torrent") }),
         /* @__PURE__ */ (0, jsx)(AddCard, { icon: "torbox", title: t2("add.torbox"), detail: services.torbox ? t2("add.torboxDetail") : t2("add.torboxSetup"), focusKey: "downloads:add:torbox", onPress: () => card("torbox") })
