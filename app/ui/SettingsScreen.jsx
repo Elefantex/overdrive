@@ -12,7 +12,7 @@ import { LEVELS, setVibrationLevel, useVibrationLevel } from './haptics.js';
 import { LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.js';
 import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
-import { driveName, storageRoots } from '../state/downloads.js';
+import { driveShortName, storageRoots } from '../state/downloads.js';
 import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
   var nameOf = (code) => LOCALES.find((locale2) => locale2.code === code).name;
@@ -98,7 +98,7 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
         ] }),
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.diskDetail") })
       ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [null, ...roots].map((value) => /* @__PURE__ */ (0, jsx)(DiskSegment, { root: value, chosen: value === root2, label: value ? driveName(value) : t2("settings.diskAuto") }, value ?? "auto")) })
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [null, ...roots].map((value) => /* @__PURE__ */ (0, jsx)(DiskSegment, { root: value, chosen: value === root2, label: value ? driveShortName(value) : t2("settings.diskAuto") }, value ?? "auto")) })
     ] });
   }
   // The vibration level (issue #32), laid out like the speed limit: every step in view, Cross picks.
