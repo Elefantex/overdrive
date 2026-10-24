@@ -1251,12 +1251,27 @@ bool Service::prepare(Job& job) {
       !std::memcmp(saved.identity, job.identity.c_str(), 65) && read_all(meta, job.completed.data(), job.completed.size());
     if (meta >= 0) close(meta);
     for (unsigned char value : job.completed) if (value > 1) valid = false;
-    if (!valid) { job.fail("partial file has no matching durable checkpoint; remove .part/.resume or choose another destination"); return false; }
-    for (std::size_t i = 0; i < job.completed.size(); ++i) if (job.completed[i]) {
+    if (valid) for (std::size_t i = 0; i < job.completed.size(); ++i) if (job.completed[i]) {
       const auto begin = job.sources.empty() ? i*job.request.range_bytes : job.segments[i].begin;
       const auto end = job.sources.empty() ? std::min(job.total, (i+1)*job.request.range_bytes) : begin+job.segments[i].length;
-      if (end > static_cast<std::uint64_t>(existing.st_size)) { job.fail("partial file is shorter than its checkpoint"); return false; }
+      // A range the checkpoint calls saved that the file no longer holds is the same dead end.
+      if (end > static_cast<std::uint64_t>(existing.st_size)) { valid = false; break; }
       job.committed += end-begin;
+    }
+    if (!valid) {
+      // A partial its checkpoint does not match, or one shorter than the ranges it calls saved, can
+      // never resume: a restarted console, a changed validator or a file that moved changes the
+      // identity. Keeping it failed the download for good, with nothing the player could do from the
+      // app (issues #110 and #111), so it goes and the transfer starts over from zero.
+      platform_log(("download: " + job.request.destination + ".part cannot resume; starting over").c_str());
+      if (job.fd >= 0) close(job.fd);
+      job.fd = -1;
+      unlink(partial.c_str());
+      unlink((job.request.destination+".resume").c_str());
+      std::fill(job.completed.begin(), job.completed.end(), 0);
+      job.committed = 0;
+      job.fd = open(partial.c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+      if (job.fd < 0) { job.fail(system_error("open partial file")); return false; }
     }
     if (job.committed && job.etag.empty() && job.sources.empty() && !check_sample(job)) return false;
   }

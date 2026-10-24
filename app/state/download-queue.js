@@ -21,7 +21,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
   var COMPLETE = ["downloaded", "file-downloaded", "installer-required", "installed", "extraction-required", "extracted"];
-  var ADOPTED = "A partial download from another source holds this name. Resume it from its original source, or delete it in Files.";
+  var ADOPTED = "A partial download from another source holds this name. Retry starts over and replaces it, or resume it from its original source.";
   var DELETED = "Its partial files were deleted. Restart to download it again, or remove it.";
   var REMOVAL_CUT = "The app closed while deleting its files. Delete it again.";
   // The passwords the catalog's archives are published with. Some entries name none or the wrong one,
@@ -1800,8 +1800,13 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       async restart(id) {
         const job2 = find(id);
         if (!["paused", "failed", "awaiting-browser"].includes(job2.state) || active2?.job === job2) return;
-        if (job2.adopted) throw new Error(ADOPTED);
-        const paths = !job2.parts?.[job2.partIndex]?.completed && (job2.options || job2.rootIdentity || job2.written || fs.exists(job2.artifact.destination + ".part") || fs.exists(job2.artifact.destination + ".resume")) ? partialFiles(job2) : [];
+        // A partial this app did not write ("adopted", left by an earlier session) is what the last
+        // attempt stopped on: its checkpoint names another run and can never be resumed. Retry is the
+        // player asking to start over, so that partial goes with the rest; refusing here left the task
+        // failed for good, with no way to resume it or begin it again (issue #111).
+        const adopted = job2.adopted;
+        delete job2.adopted;
+        const paths = !job2.parts?.[job2.partIndex]?.completed && (adopted || job2.options || job2.rootIdentity || job2.written || fs.exists(job2.artifact.destination + ".part") || fs.exists(job2.artifact.destination + ".resume")) ? partialFiles(job2) : [];
         stopCapture(job2);
         if (paths.length) await removing(job2, () => removeAll(paths));
         delete job2.directURL;
