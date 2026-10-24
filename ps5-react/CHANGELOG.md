@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — debrid download nodes
+
+- A download whose link is a debrid service's CDN (`tb-cdn.io`, `real-debrid.com`, `premiumize.me`)
+  gets eight connections at most, whatever the app asked for, and honours the server's `Retry-After`
+  in full (up to five minutes rather than one). Those nodes count connections per account and shed
+  the rest with HTTP 429; a probe answered 429 is retried with the same wait, and every attempt is
+  logged with the node, the status and the wait it asked for. Every other host downloads exactly as
+  before.
+
 ## Unreleased — packages installed from a link
 
 - `Packages.install({url, name, contentId})` (ABI v20) hands an http(s) link to the console's own
