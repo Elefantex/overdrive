@@ -89,9 +89,9 @@ import { FocusScope, Text, View, motion, useIsFocused } from '@ps5-react/core';
         Key,
         {
           compact: url,
-          // "&123" promised keys the first page already has (its digits, and the url extras): what
-          // the second page adds is the rest of the punctuation, and those brackets are its own.
-          label: symbols ? "ABC" : "{}[]",
+          // The label names what sits behind it, the characters a URL or a password asks for: "&123"
+          // once promised the digits the first page already has. On "ABC" the letters come back.
+          label: symbols ? "ABC" : "()@?~",
           value: "page",
           onKey
         },
