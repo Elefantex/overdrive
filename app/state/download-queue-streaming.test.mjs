@@ -15,7 +15,7 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
   const requests = [], installs = [], enqueued = [];
@@ -37,7 +37,7 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
       requests.push({url, options});
       if (redirect && url === 'https://host.example/f/abc')
         return {status: 302, ok: false, headers: {location: 'https://cdn.example/file.pkg'}, text: async () => ''};
-      return {status, ok: status < 300, headers: {}, text: async () => head};
+      return {status, ok: status < 300, headers: status === 206 ? {'content-range': `bytes 0-4095/${size}`} : {}, text: async () => head};
     },
   };
   const downloads = {
@@ -161,6 +161,28 @@ test('a refusal is logged with its reason and code, not the link in front of the
 
 // A file that turns out not to be a PKG is not a failure, but the log has to say so: a bare
 // "downloading it here instead" left the reason unnamed in every report until now.
+// The package's size beside the room the console has: the two lines together say whether a refusal
+// could have been about space, which no other line in app.log can answer. Nothing here sets a locale,
+// so a size renders as its translation key: this checks the line is shaped right, not the number.
+test('the handoff names the package size, and still reads well when the host gives none', async () => {
+  const capture = async (options) => {
+    const lines = [];
+    const original = console.log;
+    console.log = (...parts) => lines.push(parts.join(' '));
+    try {
+      await settled(harness(options));
+    } finally {
+      console.log = original;
+    }
+    return lines;
+  };
+  const sized = await capture({size: 100e9});
+  const unsized = await capture({size: 0});
+  assert.ok(sized.some(line => line.includes('a PS4 PKG of ')), sized.join('\n'));
+  assert.ok(unsized.some(line => line.includes('a PS4 PKG, handed to the console')), unsized.join('\n'));
+  assert.ok(sized.some(line => line.includes('internal drive free')), sized.join('\n'));
+});
+
 test('a file whose first bytes are not a PKG says so before downloading here', async () => {
   const lines = [];
   const original = console.log;

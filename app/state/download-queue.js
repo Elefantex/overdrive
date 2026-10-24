@@ -388,6 +388,9 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     var PS4_CONTENT_ID = /[A-Z]{2}\d{4}-[A-Z]{4}\d{5}_\d{2}-[A-Z0-9]{16}/;
     // How long the console has to start fetching the link before the app leaves it to the console.
     var STREAM_WATCH_MS = 3e4;
+    // How big the package is, from the range the host answered with: next to the internal drive's free
+    // space, it is the one line that says whether the console had room to take the link at all.
+    var packageSize = (headers) => Number(String(headers?.["content-range"] || "").split("/")[1]) || 0;
     async function pkgLink(job2, signal) {
       let url = job2.options.url;
       for (let hop = 0; hop < 5; hop++) {
@@ -414,7 +417,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
           console.log(`[download-queue] ${job2.id}: not streamed, its PS4 header names no content ID`);
           return null;
         }
-        return { url, contentId, kind: ps4 ? "PS4" : "PS5" };
+        return { url, contentId, kind: ps4 ? "PS4" : "PS5", total: packageSize(response.headers) };
       }
       return null;
     }
@@ -425,7 +428,10 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     var consoleFailure = (message) => {
       const text = String(message || "");
       const code = text.match(/\(0x([0-9a-zA-Z]+)\)/)?.[1];
-      const reason = text.replace(/^Packages\.install\s+\S+:?\s*/i, "").replace(/\s*\(0x[0-9a-zA-Z]+\)\s*$/i, "").trim();
+      // Read around the link rather than matching through it: the reason sits between the call's colon
+      // and the code, and the fitted regex left the whole link in the line on the console (2026-10-25).
+      const opened = text.indexOf(": "), closed = text.lastIndexOf("(0x");
+      const reason = (opened > 0 && closed > opened ? text.slice(opened + 2, closed) : "").trim();
       return `code=0x${code || "none"}${reason ? ` ${reason}` : ""}`;
     };
     // What the console's own install has to work with: it installs to the internal drive, not to this
@@ -460,7 +466,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       job2.written = 0;
       job2.message = "";
       change();
-      console.log(`[download-queue] ${job2.id}: a ${link.kind} PKG, handed to the console's downloads${link.contentId ? ` as ${link.contentId}` : ""}: ${linkForLog(link.url)}`);
+      console.log(`[download-queue] ${job2.id}: a ${link.kind} PKG${link.total ? ` of ${formatBytes(link.total)}` : ""}, handed to the console's downloads${link.contentId ? ` as ${link.contentId}` : ""}: ${linkForLog(link.url)}`);
       // The install goes to the internal drive: a full one is a refusal that looks like any other.
       console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
       let task;
