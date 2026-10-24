@@ -354,7 +354,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
             await task.done;
             installed.push(path);
           } catch (error2) {
-            console.log(`[download-queue] install refused ${path}:`, error2.message);
+            console.log(`[download-queue] install refused ${path}:`, consoleReason(error2.message));
             if (!backport(path) || paths.every(backport)) throw error2;
           } finally {
             off();
@@ -407,6 +407,11 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       }
       return null;
     }
+    // The console's own words: its error names the link first ("Packages.install <url>: <reason>
+    // (0x<code>)"), and app.log cuts a line at 382 characters, so a signed CDN link filled the line and
+    // the reason went missing exactly when it was wanted (a Wolverine fPKG, 2026-10-25). The link is
+    // logged already, masked, on the line before.
+    var consoleReason = (message) => String(message || "").replace(/^Packages\.install \S+: /, "");
     async function streamed(job2, signal) {
       const options = job2.options;
       const format = String(job2.release.format || "binary").toLowerCase();
@@ -450,7 +455,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         });
         if (settled) off();
         task.done.then(() => settle(true), (error2) => {
-          if (!settled) console.log(`[download-queue] ${job2.id}: the console refused the link: ${error2.message}`);
+          if (!settled) console.log(`[download-queue] ${job2.id}: the console refused the link: ${consoleReason(error2.message)}`);
           settle(false);
         });
         timer = setTimeout(() => settle(task.snapshot.state === "installing"), STREAM_WATCH_MS);
