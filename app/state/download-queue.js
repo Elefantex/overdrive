@@ -510,7 +510,9 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
             job2.options = formats.manifest(await response.json());
           } else {
             if (!job2.release.url && !job2.release.browserUrl) throw new Error("This release has no download URL.");
-            const resolved = job2.directURL || sourceKind(job2.release) !== "direct" ? await sources.resolve(job2.release, { signal, directURL: job2.directURL }) : { url: webURL(job2.release.url).url };
+            // A pasted link may come from a service of the user's own (a qBittorrent's WebUI), whose
+            // file is behind its password: the release carries the headers for it (link-download.js).
+            const resolved = job2.directURL || sourceKind(job2.release) !== "direct" ? await sources.resolve(job2.release, { signal, directURL: job2.directURL }) : { url: webURL(job2.release.url).url, headers: job2.release.headers };
             job2.options = {
               ...resolved,
               rejectHtml: true,
@@ -660,7 +662,8 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       // are none Overdrive knows, the host sent something else, usually a web page. Leaving it as a
       // downloaded ".binary" (issue #8) told the user nothing. Only a small file reads as one, though:
       // gigabytes the headers don't name are still the game, in a format not checked (issue #24).
-      if (!kind && job2.release.format === "binary" && (fs.stat(job2.downloadDestination)?.size || 0) < WEB_PAGE_BYTES) throw new Error("Not a game file: the host sent something else.");
+      // A pasted link is the user's own file, not a catalog entry: whatever it is, it is kept.
+      if (!kind && !job2.release.link && job2.release.format === "binary" && (fs.stat(job2.downloadDestination)?.size || 0) < WEB_PAGE_BYTES) throw new Error("Not a game file: the host sent something else.");
       const named = kind ? null : namedKind(job2);
       if (!kind && !named) return;
       if (named) console.log(`[download-queue] headers name no format; the file's name says ${named}`);

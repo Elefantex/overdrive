@@ -4,6 +4,7 @@
 import '../assets/Inter-Regular.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useRef, useState } from 'react';
+import { AddDownloads } from './AddDownloads.jsx';
 import { DownloadRow, primaryKey } from './DownloadRow.jsx';
 import { SummaryPanel } from './SummaryPanel.jsx';
 import { useJobs } from './useQueue.js';
@@ -132,6 +133,8 @@ import { FocusScope, ScrollView, Text, View } from '@ps5-react/core';
         ] }),
         /* @__PURE__ */ (0, jsx)(Text, { style: { width: 420, fontFamily: "Inter-Regular", fontSize: 21, color: "#f2f2f3", numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: failure })
       ] }),
+      /* Downloads of the user's own, beside the catalog's (issues #107, #89, #20). */
+      /* @__PURE__ */ (0, jsx)(AddDownloads, {}),
       /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, flexDirection: "row", gap: 48, paddingHorizontal: 48 }, children: [
         jobs.length > 0 ? /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 60, paddingBottom: 60 }, children: [
           /* @__PURE__ */ (0, jsx)(Section, { title: "downloads.section.active", jobs: active2, first, handlers }),
