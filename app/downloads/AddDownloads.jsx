@@ -1,7 +1,7 @@
 // The Downloads page's own section for downloads that do not come from the catalog (issues #107,
-// #89, #20): a pasted link, a torrent through the user's own qBittorrent, links and magnets through
-// TorBox, and the setup for both services — each card one service, so a torrent never goes to one
-// the user did not press. A file that has to be fetched first (TorBox, qBittorrent) shows it in a
+// #89, #20): a pasted link, a torrent through the user's own qBittorrent, and links and magnets
+// through a debrid service — TorBox, Real-Debrid or Premiumize, picked in one dialog so each card
+// stays one thing. A file that has to be fetched first (a debrid service, qBittorrent) shows it in a
 // dialog with Cancel; once the service names the file, it joins the normal queue, on the drive
 // chosen in Settings.
 //
@@ -19,6 +19,8 @@ import { qbittorrent as qbittorrentSettings, services as serviceSettings, setSer
 import { cancellation } from '../state/download-sources.js';
 import { addLink, linkInput } from '../state/link-download.js';
 import { createTorbox } from '../state/torbox.js';
+import { createRealDebrid } from '../state/realdebrid.js';
+import { createPremiumize } from '../state/premiumize.js';
 import { createQBittorrent } from '../state/qbittorrent.js';
 import { URLDialog } from './URLDialog.jsx';
 import { primaryKey } from './DownloadRow.jsx';
@@ -93,16 +95,20 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
   }
 
   function serviceName(t2, service) {
-    return t2(service === "torbox" ? "add.torboxName" : "add.qbittorrentName");
+    return t2(`add.${service}Name`);
   }
+
+  // The debrid services, in the order the dialog lists them. Each has its own key and its own card
+  // row, and none is ever used on another's behalf.
+  var DEBRID = ["torbox", "realdebrid", "premiumize"];
 
   // The guided setup behind a card: its own service's fields, the first time the card is pressed and
   // whenever the user asks to change them. What is already saved shows as it is; Continue goes on.
   function SetupDialog({ service, onField, onDone, onCancel }) {
     const t2 = useT();
     const services = useServices();
-    const rows = service === "torbox"
-      ? [{ field: "torbox", icon: "torbox", title: t2("add.torboxKey"), value: services.torbox }]
+    const rows = DEBRID.includes(service)
+      ? [{ field: service, icon: service, title: t2(`add.field.${service}`), value: services[service] }]
       : [
           { field: "address", icon: "globe", title: t2("add.address"), value: services.address },
           { field: "user", icon: "controller", title: t2("add.user"), value: services.user },
@@ -145,6 +151,36 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     ] });
   }
 
+  // The debrid services, one row each with its own mark and whether its key is set: picking one goes
+  // on to its question or its setup, exactly as a card of its own would have.
+  function ServicesDialog({ services, onPick, onCancel }) {
+    const t2 = useT();
+    return /* @__PURE__ */ (0, jsxs)(Dialog, { onBack: onCancel, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 34, fontWeight: 600, color: colors.fg }, children: t2("add.servicesTitle") }),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("add.servicesBody") }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 14 }, children: DEBRID.map((service) => /* @__PURE__ */ (0, jsxs)(View, {
+        focusKey: `downloads:debrid:${service}`,
+        onPress: () => onPick(service),
+        style: (state) => [{ width: 280, alignItems: "center", gap: 12, borderRadius: 14, paddingVertical: 24, backgroundColor: colors.surface2 }, state.focused ? { backgroundColor: colors.surface3 } : null],
+        children: [
+          /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+          /* @__PURE__ */ (0, jsx)(Icon, { name: service, size: 52, color: colors.fg }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: serviceName(t2, service) }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 18, color: services[service] ? colors.fg : colors.subtle }, children: t2(services[service] ? "add.serviceReady" : "add.serviceNeeds") })
+        ]
+      }, service)) })
+    ] });
+  }
+
+  // The client a route names, built around the key saved for it: one debrid service each, or the
+  // qBittorrent on the home network.
+  function preparer(route, settings) {
+    if (route === "torbox") return createTorbox({ http: Http, key: settings.torbox });
+    if (route === "realdebrid") return createRealDebrid({ http: Http, key: settings.realdebrid });
+    if (route === "premiumize") return createPremiumize({ http: Http, key: settings.premiumize });
+    return createQBittorrent({ http: Http, ...qbittorrentSettings() });
+  }
+
   // Hands the link to the service and waits; the file joins the queue as soon as it names one.
   function RunDialog({ route, value, onAdded, onClose }) {
     const t2 = useT();
@@ -160,9 +196,7 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       };
       void (async () => {
         try {
-          const prepared = route === "torbox"
-            ? await createTorbox({ http: Http, key: settings.torbox }).prepare(value, { onProgress: progress, signal: cancel.signal })
-            : await createQBittorrent({ http: Http, ...qbittorrentSettings() }).prepare(value, { onProgress: progress, signal: cancel.signal });
+          const prepared = await preparer(route, settings).prepare(value, { onProgress: progress, signal: cancel.signal });
           if (!live) return;
           const id = addLink(downloadQueue(), { ...prepared, title: prepared.filename, root: chosenRoot() });
           live = false;
@@ -198,7 +232,7 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     const services = useServices();
     const { focusLater } = useNavActions();
     const [dialog, setDialog] = useState(null);
-    // { kind: "link" | "torrent" | "torbox" | "setup" | "ask" | "run" | "field", ... }
+    // { kind: "link" | "torrent" | "services" | "debrid" | "setup" | "ask" | "run" | "field", ... }
     // A URL dialog closes itself once its submit returns: a submit that opened the next dialog has
     // already replaced it by then, and this leaves that one alone.
     const closeIf = (kind) => setDialog((current) => current && current.kind === kind ? null : current);
@@ -212,17 +246,17 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     // What comes after a setup or a question: the pasted value goes on to its service, and a card
     // pressed on its own opens its own URL dialog.
     const next2 = (next) => {
-      if (next.value != null) open(next.kind, next.value);
-      else setDialog({ kind: next.kind });
+      if (next.value != null) open(next.kind, next.value, next.service);
+      else setDialog({ kind: next.kind, service: next.service });
     };
 
     // A magnet pasted anywhere goes through a service: the queue cannot fetch one itself.
-    const open = (kind, value) => {
+    const open = (kind, value, service) => {
       const parsed = linkInput(value);
-      if (kind !== "torrent" && parsed.kind === "magnet") kind = "torrent";
+      if (kind !== "torrent" && kind !== "debrid" && parsed.kind === "magnet") kind = "torrent";
       if (kind === "torrent") {
-        // This card is the client's: a magnet or a .torrent link, fetched by qBittorrent. TorBox
-        // has its own card, and never takes a torrent on this one's behalf.
+        // This card is the client's: a magnet or a .torrent link, fetched by qBittorrent. The debrid
+        // card is its own, and never takes a torrent on this one's behalf.
         const torrent = /\.torrent(?:[?#]|$)/i.test(parsed.value);
         if (parsed.kind !== "magnet" && !torrent) throw new Error(t2("add.magnetOnly"));
         if (!services.address) {
@@ -233,40 +267,48 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         setDialog({ kind: "run", route: "qbittorrent", value: parsed.value });
         return;
       }
-      if (kind === "torbox") {
+      if (kind === "debrid") {
+        // A debrid service takes a magnet or a host link; only qBittorrent fetches a .torrent file.
         if (/\.torrent(?:[?#]|$)/i.test(parsed.value) && parsed.kind !== "magnet") throw new Error(t2("add.torrentLinkNeedsClient"));
-        if (!services.torbox) {
-          setDialog({ kind: "setup", service: "torbox", next: { kind: "torbox", value: parsed.value } });
+        if (!services[service]) {
+          setDialog({ kind: "setup", service, next: { kind: "debrid", service, value: parsed.value } });
           return;
         }
-        setDialog({ kind: "run", route: "torbox", value: parsed.value });
+        setDialog({ kind: "run", route: service, value: parsed.value });
         return;
       }
       // A plain link: the queue fetches it, through the host's own resolver when it knows the host.
       add({ url: parsed.value, filename: parsed.name });
     };
 
-    // A card: its service's guided setup the first time, a "change it?" question after. Each card
-    // is one service — the torrent card is qBittorrent's, the TorBox card TorBox's — so a torrent
-    // never goes to a service the user did not pick by pressing that card.
-    const card = (kind) => {
-      const service = kind === "torbox" ? "torbox" : "qbittorrent";
-      const set = kind === "torbox" ? !!services.torbox : !!services.address;
-      setDialog(set ? { kind: "ask", service, next: { kind } } : { kind: "setup", service, next: { kind } });
+    // The torrent card: its client's guided setup the first time, a "change it?" question after.
+    const card = () => {
+      const next3 = { kind: "torrent" };
+      setDialog(services.address ? { kind: "ask", service: "qbittorrent", next: next3 } : { kind: "setup", service: "qbittorrent", next: next3 });
+    };
+
+    // One debrid service from the dialog: its key's setup the first time, its question after. Each
+    // service keeps its own downloads, so none is ever used on another's behalf.
+    const pick = (service) => {
+      const next3 = { kind: "debrid", service };
+      setDialog(services[service] ? { kind: "ask", service, next: next3 } : { kind: "setup", service, next: next3 });
     };
 
     // The fields of a service, opened from its setup.
     const field = (name, from) => {
-      const values = { torbox: services.torbox, address: services.address, user: services.user, password: services.password };
-      const service = from?.service ?? (name === "torbox" ? "torbox" : "qbittorrent");
+      const values = {
+        torbox: services.torbox, realdebrid: services.realdebrid, premiumize: services.premiumize,
+        address: services.address, user: services.user, password: services.password
+      };
+      const service = from?.service ?? (DEBRID.includes(name) ? name : "qbittorrent");
       setDialog({ kind: "field", field: name, value: values[name] || "", service, next: from?.next });
     };
 
     // Continue from a setup: a service with nothing in it asks for its main field first.
     const setupDone = (service, next3) => {
       const settings = serviceSettings();
-      if (service === "torbox" && !settings.torbox) return field("torbox", { service, next: next3 });
-      if (service === "qbittorrent" && !settings.address) return field("address", { service, next: next3 });
+      const main = service === "qbittorrent" ? "address" : service;
+      if (!settings[main]) return field(main, { service, next: next3 });
       next2(next3);
     };
 
@@ -276,8 +318,8 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       // for: the first card sat flush with its left edge, so the ring was cut and looked broken.
       /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14, paddingLeft: 12 }, children: [
         /* @__PURE__ */ (0, jsx)(AddCard, { icon: "link", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
-        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "qbittorrent", title: t2("add.torrent"), detail: services.address ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: () => card("torrent") }),
-        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "torbox", title: t2("add.torbox"), detail: services.torbox ? t2("add.torboxDetail") : t2("add.torboxSetup"), focusKey: "downloads:add:torbox", onPress: () => card("torbox") })
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "qbittorrent", title: t2("add.torrent"), detail: services.address ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: card }),
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "layers", title: t2("add.debrid"), detail: t2("add.debridDetail"), focusKey: "downloads:add:debrid", onPress: () => setDialog({ kind: "services" }) })
       ] })
     ] });
 
@@ -290,9 +332,17 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         title: t2("add.torrentTitle"), detail: t2("add.torrentBody"), initial: "magnet:?xt=urn:btih:",
         submit: (value) => open("torrent", value), onClose: () => closeIf("torrent")
       }) : null,
-      dialog && dialog.kind === "torbox" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
-        title: t2("add.torboxTitle"), detail: t2("add.torboxBody"), initial: "",
-        submit: (value) => open("torbox", value), onClose: () => closeIf("torbox")
+      dialog && dialog.kind === "services" ? /* @__PURE__ */ (0, jsx)(ServicesDialog, {
+        services,
+        onPick: pick,
+        onCancel: () => setDialog(null)
+      }) : null,
+      dialog && dialog.kind === "debrid" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
+        title: serviceName(t2, dialog.service),
+        detail: t2("add.debridBody", { service: serviceName(t2, dialog.service) }),
+        initial: "",
+        submit: (value) => open("debrid", value, dialog.service),
+        onClose: () => closeIf("debrid")
       }) : null,
       dialog && dialog.kind === "field" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
         title: t2(`add.field.${dialog.field}`), detail: t2(`add.fieldBody.${dialog.field}`), initial: dialog.value,
