@@ -10,6 +10,10 @@ import { px } from './scale.js';
   var ring = (cx, cy, r) => `M${cx + r} ${cy}a${r} ${r} 0 1 1-${2 * r} 0a${r} ${r} 0 1 1 ${2 * r} 0`;
   var ICONS = {
     search: [ring(11, 11, 8), "m21 21-4.3-4.3"],
+    // The header's tab icons (lucide 0.462, as the rest).
+    compass: [ring(12, 12, 10), "m16.2 7.8-2.5 5.9-5.9 2.5 2.5-5.9 5.9-2.5Z"],
+    controller: ["M6.8 8h10.4a4 4 0 0 1 3.8 2.8l1.1 5.3a2.8 2.8 0 0 1-4.5 2.8l-2.5-2.1H8.9l-2.5 2.1a2.8 2.8 0 0 1-4.5-2.8L3 10.8A4 4 0 0 1 6.8 8Z", "M8 11v4", "M6 13h4", "M16 12h.01", "M18 14h.01"],
+    homebrew: ["M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"],
     searchX: [ring(11, 11, 8), "m21 21-4.3-4.3", "m13.5 8.5-5 5", "m8.5 8.5 5 5"],
     chevronDown: ["m6 9 6 6 6-6"],
     chevronUp: ["m18 15-6-6-6 6"],
