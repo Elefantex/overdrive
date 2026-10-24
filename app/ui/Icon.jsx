@@ -79,9 +79,48 @@ import { px } from './scale.js';
     ]
   };
   var MIRRORED = { chevronLeft: "chevronRight", chevronRight: "chevronLeft", arrowLeft: "arrowRight" };
+  // The download services' own marks (issues #89, #20): filled shapes in their own colours, as their
+  // owners draw them, rather than the outline set above. TorBox's is torbox.app's own logo
+  // (torbox.app/assets/logo-bb7a9579.svg); the torrent one is µTorrent's. Both are drawn at `size`,
+  // in the box that fits their proportions.
+  var BRANDS = {
+    torbox: {
+      viewBox: "367 308 766 884",
+      paths: [
+        { d: "M749.99 749.99 749.99 1191.96 367.25 970.97 367.25 529.01Z", fill: "#00444d" },
+        { d: "M1132.75 529.01 1132.75 970.97 749.99 1191.96 749.99 749.99 872.87 679.05 956.71 630.66Z", fill: "#34ba90" },
+        { d: "M1132.75 529.01 749.99 749.99 367.25 529.01 749.99 308.04Z", fill: "#52a153" },
+        { d: "M1043.04 739.36 958.66 1057.08 952.4 851.84 839.71 915.39 872.87 679.05 956.71 630.66 931.81 799.21Z", fill: "#ffffff" }
+      ]
+    },
+    utorrent: {
+      viewBox: "0 0 241.046 240.081",
+      paths: [
+        { d: "m137.38383 239.99418c44.64832-6.2824 81.43169-37.04615 96.37094-78.28306-1.17843.43717-2.61663.95348-4.33344 1.46978-20.0859 5.93191-34.17804-4.68447-37.02056-6.51981-2.84253-1.81651-5.88835-4.82769-6.45686-4.6694-1.83729 11.38519-12.22849 27.19481-35.94756 34.36661-12.98901 3.93827-26.97196 4.02872-36.94903-1.56777l3.29055 8.26095c1.31773 3.29382 3.52774 8.69811 4.89817 11.97687 0 0 8.61793 20.53931 16.14779 34.96583", fill: "#76b83f", fillRule: "evenodd" },
+        { d: "M27.337163 71.292153 62.88564 64.663041c3.237841-.591683 6.82582 1.247434 7.962829 4.085251l24.423106 61.011188c3.324434 6.36154 4.002122 7.76725 6.166955 10.48071 0 0 16.86313 24.09695 42.57008 18.21027 17.33374-3.96466 25.42834-16.98922 25.97802-26.25641.5685-2.97349-.32002-6.71579-1.86364-10.20936L138.86947 55.784027c-1.17465-2.668226.21837-5.28746 3.07219-5.833919l29.64506-5.528656c2.71828-.48616 5.90718 1.202209 7.09313 3.783756l32.401 69.437962c1.30643 2.77752 3.95318 7.15673 5.89964 9.70812 0 0 6.73923 9.68928 17.53705 7.85017 2.66934 0 5.7114-1.44718 5.7114-1.44718.47438-4.32267.72663-8.70565.72663-13.16023C240.95557 53.986366 187.01165 0 120.46273 0 53.932634 0 0 53.986366 0 120.59405c0 53.44744 34.739017 98.7583 82.851068 114.57923-3.249135-6.69318-6.53592-14.0911-9.227845-21.31567L23.067731 77.872271c-1.110654-2.984796.835815-5.935674 4.269432-6.580118", fill: "#76b83f", fillRule: "evenodd" }
+      ]
+    }
+  };
   function Icon({ name, size = 16, color = "#f2f2f3", fill: fill2 = "none", strokeWidth = 2, fixed = false }) {
     const { rtl } = useLocale();
     const drawn = rtl && !fixed ? MIRRORED[name] ?? name : name;
+    const brand = BRANDS[drawn];
+    if (brand) {
+      const boxWidth = Number(brand.viewBox.split(" ")[2]);
+      const boxHeight = Number(brand.viewBox.split(" ")[3]);
+      const width = boxWidth > boxHeight ? size : Math.round(size * boxWidth / boxHeight * 100) / 100;
+      const height = boxWidth > boxHeight ? Math.round(size * boxHeight / boxWidth * 100) / 100 : size;
+      return /* @__PURE__ */ (0, jsx)(Svg, { width: px(width), height: px(height), viewBox: brand.viewBox, children: brand.paths.map((path) => /* @__PURE__ */ (0, jsx)(
+        Path,
+        {
+          d: path.d,
+          fill: path.fill,
+          stroke: "none",
+          fillRule: path.fillRule
+        },
+        path.d
+      )) });
+    }
     return /* @__PURE__ */ (0, jsx)(Svg, { width: px(size), height: px(size), viewBox: "0 0 24 24", children: ICONS[drawn].map((d) => /* @__PURE__ */ (0, jsx)(
       Path,
       {

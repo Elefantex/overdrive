@@ -3,6 +3,9 @@
 // both services. A file that has to be fetched first (TorBox, qBittorrent) shows its progress in a
 // dialog with Cancel; once the service names the file, it joins the normal queue, on the drive
 // chosen in Settings.
+//
+// The strip scrolls with the list, so it is the screen that places it (useAddDownloads returns it
+// beside the dialogs): a fixed strip above the list took the focus with it when the list scrolled.
 
 import '../assets/Inter-Regular.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -36,15 +39,15 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
   }
 
   var CARD = { width: 430, height: 124, flexDirection: "row", alignItems: "center", gap: 18, borderRadius: 16, paddingHorizontal: 20, backgroundColor: colors.surface };
-  function AddCard({ icon, title, detail, onPress, focusKey, muted }) {
+  function AddCard({ icon, title, detail, onPress, focusKey }) {
     return /* @__PURE__ */ (0, jsxs)(View, {
       focusKey, onPress,
       style: (state) => [CARD, state.focused ? { backgroundColor: colors.surface2 } : null],
       children: [
         /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-        /* @__PURE__ */ (0, jsx)(View, { style: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 26, color: muted ? colors.subtle : colors.fg }) }),
+        /* @__PURE__ */ (0, jsx)(View, { style: { width: 58, height: 58, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 30, color: colors.fg }) }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 4 }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 24, fontWeight: 600, color: muted ? colors.muted : colors.fg, numberOfLines: 1 }, children: title }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 24, fontWeight: 600, color: colors.fg, numberOfLines: 1 }, children: title }),
           /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 19, color: colors.muted, numberOfLines: 2, lineHeight: 26 }, children: detail })
         ] })
       ]
@@ -76,62 +79,81 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     });
   }
 
-  // The services' own settings: TorBox's key and the qBittorrent WebUI's address and login. They sit
-  // beside the section that needs them rather than in Settings, since each user enters their own.
-  function ServicesDialog({ onClose, onField }) {
-    const t2 = useT();
-    const services = useServices();
-    const rows = [
-      { field: "torbox", icon: "archive", title: t2("add.torboxKey"), value: services.torbox },
-      { field: "address", icon: "globe", title: t2("add.address"), value: services.address },
-      { field: "user", icon: "controller", title: t2("add.user"), value: services.user },
-      { field: "password", icon: "controller", title: t2("add.password"), value: services.password ? "••••••••" : "" }
-    ];
+  // The frame every dialog here shares: a modal over the page, Back leaving it.
+  function Dialog({ width = 980, onBack, children }) {
     return /* @__PURE__ */ (0, jsx)(FocusScope, {
       trap: true, autoFocus: true,
       onBack: () => {
-        onClose();
+        onBack();
         return true;
       },
-      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: 980, gap: 20, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface, padding: 44 }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 34, fontWeight: 600, color: colors.fg }, children: t2("add.servicesTitle") }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("add.servicesDetail") }),
-        rows.map((row) => /* @__PURE__ */ (0, jsxs)(View, {
-          focusKey: `downloads:service:${row.field}`,
-          onPress: () => onField(row.field),
-          style: (state) => [{ flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 12, paddingHorizontal: 16, height: 64, backgroundColor: colors.surface2 }, state.focused ? { backgroundColor: colors.surface3 } : null],
-          children: [
-            /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-            /* @__PURE__ */ (0, jsx)(Icon, { name: row.icon, size: 20, color: colors.muted }),
-            /* @__PURE__ */ (0, jsx)(Text, { style: { flex: 1, fontFamily: "Inter-Regular", fontSize: 22, color: colors.fg }, children: row.title }),
-            /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: row.value ? colors.fg : colors.subtle, numberOfLines: 1, ellipsizeMode: "head" }, children: row.value || t2("add.notSet") })
-          ]
-        }, row.field)),
-        /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12, paddingTop: 4 }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.close"), variant: "outline", size: "sm", onPress: onClose }) })
-      ] }) })
+      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width, gap: 20, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface, padding: 44 }, children }) })
     });
+  }
+
+  function serviceName(t2, service) {
+    return t2(service === "torbox" ? "add.torboxName" : "add.qbittorrentName");
+  }
+
+  // The guided setup behind a card: its own service's fields, the first time the card is pressed and
+  // whenever the user asks to change them. What is already saved shows as it is; Continue goes on.
+  function SetupDialog({ service, onField, onDone, onCancel }) {
+    const t2 = useT();
+    const services = useServices();
+    const rows = service === "torbox"
+      ? [{ field: "torbox", icon: "torbox", title: t2("add.torboxKey"), value: services.torbox }]
+      : [
+          { field: "address", icon: "globe", title: t2("add.address"), value: services.address },
+          { field: "user", icon: "controller", title: t2("add.user"), value: services.user },
+          { field: "password", icon: "controller", title: t2("add.password"), value: services.password ? "••••••••" : "" }
+        ];
+    return /* @__PURE__ */ (0, jsxs)(Dialog, { onBack: onCancel, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 34, fontWeight: 600, color: colors.fg }, children: t2("add.setupTitle", { service: serviceName(t2, service) }) }),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("add.setupBody") }),
+      rows.map((row) => /* @__PURE__ */ (0, jsxs)(View, {
+        focusKey: `downloads:setup:${row.field}`,
+        onPress: () => onField(row.field),
+        style: (state) => [{ flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 12, paddingHorizontal: 16, height: 64, backgroundColor: colors.surface2 }, state.focused ? { backgroundColor: colors.surface3 } : null],
+        children: [
+          /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+          /* @__PURE__ */ (0, jsx)(Icon, { name: row.icon, size: 20, color: colors.muted }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { flex: 1, fontFamily: "Inter-Regular", fontSize: 22, color: colors.fg }, children: row.title }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: row.value ? colors.fg : colors.subtle, numberOfLines: 1, ellipsizeMode: "head" }, children: row.value || t2("add.notSet") })
+        ]
+      }, row.field)),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12, paddingTop: 4 }, children: [
+        /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.continue"), focusKey: "downloads:setup:done", autoFocus: true, onPress: onDone }),
+        /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "outline", onPress: onCancel })
+      ] })
+    ] });
+  }
+
+  // A card whose service is already set up asks before touching what is saved.
+  function AskDialog({ service, onContinue, onChange, onCancel }) {
+    const t2 = useT();
+    return /* @__PURE__ */ (0, jsxs)(Dialog, { width: 900, onBack: onCancel, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 32, fontWeight: 600, color: colors.fg }, children: t2("add.configuredTitle", { service: serviceName(t2, service) }) }),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("add.configuredBody") }),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12, paddingTop: 4 }, children: [
+        /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.continue"), focusKey: "downloads:ask:continue", autoFocus: true, onPress: onContinue }),
+        /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.modify"), icon: "settings", variant: "outline", onPress: onChange }),
+        /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "ghost", onPress: onCancel })
+      ] })
+    ] });
   }
 
   // Picks the service a magnet goes to, when both are set up.
   function RouteDialog({ value, routes, onPick, onClose }) {
     const t2 = useT();
-    const names = { torbox: t2("add.torboxName"), qbittorrent: t2("add.qbittorrentName") };
-    return /* @__PURE__ */ (0, jsx)(FocusScope, {
-      trap: true, autoFocus: true,
-      onBack: () => {
-        onClose();
-        return true;
-      },
-      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: 900, gap: 24, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface, padding: 44 }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 32, fontWeight: 600, color: colors.fg }, children: t2("add.routeTitle") }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, numberOfLines: 2, ellipsizeMode: "middle", lineHeight: 30 }, children: value }),
-        /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: routes.map((route) => /* @__PURE__ */ (0, jsx)(Button2, {
-          label: names[route], icon: route === "torbox" ? "archive" : "homebrew", size: "lg",
-          focusKey: `downloads:route:${route}`, onPress: () => onPick(route)
-        }, route)) }),
-        /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row" }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "outline", size: "sm", onPress: onClose }) })
-      ] }) })
-    });
+    return /* @__PURE__ */ (0, jsxs)(Dialog, { width: 900, onBack: onClose, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 32, fontWeight: 600, color: colors.fg }, children: t2("add.routeTitle") }),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, numberOfLines: 2, ellipsizeMode: "middle", lineHeight: 30 }, children: value }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: routes.map((route) => /* @__PURE__ */ (0, jsx)(Button2, {
+        label: serviceName(t2, route), icon: route === "torbox" ? "torbox" : "utorrent", size: "lg",
+        focusKey: `downloads:route:${route}`, onPress: () => onPick(route)
+      }, route)) }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row" }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "outline", size: "sm", onPress: onClose }) })
+    ] });
   }
 
   // Hands the link to the service and waits; the file joins the queue as soon as it names one.
@@ -166,7 +188,7 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       };
     }, [route, value]);
 
-    const service = route === "torbox" ? t2("add.torboxName") : t2("add.qbittorrentName");
+    const service = serviceName(t2, route);
     return /* @__PURE__ */ (0, jsx)(Waiting, {
       title: t2("add.waitTitle", { service }),
       detail: t2("add.waitDetail", { service }),
@@ -180,28 +202,18 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     });
   }
 
-  function AddDownloads({ onAdded }) {
+  // The strip and its dialogs. The strip belongs in the page's list, where it scrolls with it, and
+  // the dialogs above everything: the screen asks for both.
+  function useAddDownloads({ onAdded } = {}) {
     const t2 = useT();
     const services = useServices();
     const { focusLater } = useNavActions();
     const routes = [services.torbox ? "torbox" : null, services.address ? "qbittorrent" : null].filter(Boolean);
     const [dialog, setDialog] = useState(null);
-    // { kind: "link" | "torrent" | "torbox" }, { kind: "route", value }, { kind: "run", route, value },
-    // { kind: "services" }, { kind: "field", field, value }
-    // The URL dialog closes itself once its submit returns, so a submit that opens the next dialog
-    // says so here: that close must not wipe what it opened.
-    const opening = useRef(false);
-    const show = (value) => {
-      opening.current = true;
-      setDialog(value);
-    };
-    const close = () => {
-      if (opening.current) {
-        opening.current = false;
-        return;
-      }
-      setDialog(null);
-    };
+    // { kind: "link" | "torrent" | "torbox" | "setup" | "ask" | "route" | "run" | "field", ... }
+    // A URL dialog closes itself once its submit returns: a submit that opened the next dialog has
+    // already replaced it by then, and this leaves that one alone.
+    const closeIf = (kind) => setDialog((current) => current && current.kind === kind ? null : current);
 
     const add = (file) => {
       const id = addLink(downloadQueue(), { url: file.url, filename: file.filename, headers: file.headers, sizeBytes: file.sizeBytes, title: file.filename, root: chosenRoot() });
@@ -209,8 +221,15 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       else focusLater(primaryKey(id));
     };
 
+    // What comes after a setup or a question: the pasted value goes on to its service, and a card
+    // pressed on its own opens its own URL dialog.
+    const next2 = (next) => {
+      if (next.value != null) open(next.kind, next.value);
+      else setDialog({ kind: next.kind });
+    };
+
     // A magnet pasted anywhere goes through a service: the queue cannot fetch one itself.
-    const begin = (kind, value) => {
+    const open = (kind, value) => {
       const parsed = linkInput(value);
       if (kind !== "torrent" && parsed.kind === "magnet") kind = "torrent";
       if (kind === "torrent") {
@@ -221,68 +240,101 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         const usable = parsed.kind === "magnet" ? routes : routes.filter((route) => route === "qbittorrent");
         if (!usable.length) {
           if (routes.length) throw new Error(t2("add.torrentLinkNeedsClient"));
-          show({ kind: "services" });
+          // Nothing is set up yet: the guide asks for the client, then carries on with the link.
+          setDialog({ kind: "setup", service: "qbittorrent", next: { kind: "torrent", value: parsed.value } });
           return;
         }
         if (usable.length > 1) {
-          show({ kind: "route", value: parsed.value, routes: usable });
+          setDialog({ kind: "route", value: parsed.value, routes: usable });
           return;
         }
-        show({ kind: "run", route: usable[0], value: parsed.value });
+        setDialog({ kind: "run", route: usable[0], value: parsed.value });
         return;
       }
       if (kind === "torbox") {
         if (/\.torrent(?:[?#]|$)/i.test(parsed.value) && parsed.kind !== "magnet") throw new Error(t2("add.torrentLinkNeedsClient"));
         if (!services.torbox) {
-          show({ kind: "services" });
+          setDialog({ kind: "setup", service: "torbox", next: { kind: "torbox", value: parsed.value } });
           return;
         }
-        show({ kind: "run", route: "torbox", value: parsed.value });
+        setDialog({ kind: "run", route: "torbox", value: parsed.value });
         return;
       }
       // A plain link: the queue fetches it, through the host's own resolver when it knows the host.
       add({ url: parsed.value, filename: parsed.name });
     };
 
-    const field = (name) => {
-      const values = { torbox: services.torbox, address: services.address, user: services.user, password: services.password };
-      setDialog({ kind: "field", field: name, value: values[name] || "" });
+    // A card: its service's guided setup the first time, a "change it?" question after.
+    const card = (kind) => {
+      const service = kind === "torbox" ? "torbox" : "qbittorrent";
+      const set = kind === "torbox" ? !!services.torbox : !!services.address;
+      if (!set) {
+        // A torrent with TorBox already set up needs no client: that service can do it.
+        if (kind === "torrent" && services.torbox) setDialog({ kind });
+        else setDialog({ kind: "setup", service, next: { kind } });
+        return;
+      }
+      setDialog({ kind: "ask", service, next: { kind } });
     };
 
-    return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { paddingHorizontal: 48, paddingBottom: 30, gap: 14 }, children: [
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 12 }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { flex: 1, fontFamily: "Inter-Regular", fontSize: 20, fontWeight: 600, color: colors.subtle, letterSpacing: 1 }, children: t2("add.title") }),
-          /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.setup"), icon: "settings", variant: "ghost", size: "sm", focusKey: "downloads:add:setup", onPress: () => setDialog({ kind: "services" }) })
-        ] }),
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14 }, children: [
-          /* @__PURE__ */ (0, jsx)(AddCard, { icon: "globe", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
-          /* @__PURE__ */ (0, jsx)(AddCard, { icon: "layers", title: t2("add.torrent"), detail: routes.length ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", muted: !routes.length, onPress: () => setDialog({ kind: "torrent" }) }),
-          /* @__PURE__ */ (0, jsx)(AddCard, { icon: "archive", title: t2("add.torbox"), detail: services.torbox ? t2("add.torboxDetail") : t2("add.torboxSetup"), focusKey: "downloads:add:torbox", muted: !services.torbox, onPress: () => setDialog({ kind: "torbox" }) })
-        ] })
-      ] }),
+    // The fields of a service, opened from its setup.
+    const field = (name, from) => {
+      const values = { torbox: services.torbox, address: services.address, user: services.user, password: services.password };
+      const service = from?.service ?? (name === "torbox" ? "torbox" : "qbittorrent");
+      setDialog({ kind: "field", field: name, value: values[name] || "", service, next: from?.next });
+    };
+
+    // Continue from a setup: a service with nothing in it asks for its main field first.
+    const setupDone = (service, next3) => {
+      const settings = serviceSettings();
+      if (service === "torbox" && !settings.torbox) return field("torbox", { service, next: next3 });
+      if (service === "qbittorrent" && !settings.address) return field("address", { service, next: next3 });
+      next2(next3);
+    };
+
+    const strip = /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 14 }, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { paddingHorizontal: 6, fontFamily: "Inter-Regular", fontSize: 20, fontWeight: 600, color: colors.subtle, letterSpacing: 1 }, children: t2("add.title") }),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14 }, children: [
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "globe", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "utorrent", title: t2("add.torrent"), detail: routes.length ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: () => card("torrent") }),
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "torbox", title: t2("add.torbox"), detail: services.torbox ? t2("add.torboxDetail") : t2("add.torboxSetup"), focusKey: "downloads:add:torbox", onPress: () => card("torbox") })
+      ] })
+    ] });
+
+    const dialogs = /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
       dialog && dialog.kind === "link" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
         title: t2("add.linkTitle"), detail: t2("add.linkBody"), initial: "",
-        submit: (value) => begin("link", value), onClose: close
+        submit: (value) => open("link", value), onClose: () => closeIf("link")
       }) : null,
       dialog && dialog.kind === "torrent" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
         title: t2("add.torrentTitle"), detail: t2("add.torrentBody"), initial: "magnet:?xt=urn:btih:",
-        submit: (value) => begin("torrent", value), onClose: close
+        submit: (value) => open("torrent", value), onClose: () => closeIf("torrent")
       }) : null,
       dialog && dialog.kind === "torbox" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
         title: t2("add.torboxTitle"), detail: t2("add.torboxBody"), initial: "",
-        submit: (value) => begin("torbox", value), onClose: close
+        submit: (value) => open("torbox", value), onClose: () => closeIf("torbox")
       }) : null,
       dialog && dialog.kind === "field" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
         title: t2(`add.field.${dialog.field}`), detail: t2(`add.fieldBody.${dialog.field}`), initial: dialog.value,
-        // This dialog's own close already goes back to the list of settings, so it needs no flag.
+        // This dialog's own close already goes back to the setup it came from, saved or not.
         submit: (value) => {
           setService(dialog.field, value);
-          setDialog({ kind: "services" });
+          setDialog({ kind: "setup", service: dialog.service, next: dialog.next });
         },
-        onClose: () => setDialog({ kind: "services" })
+        onClose: () => setDialog({ kind: "setup", service: dialog.service, next: dialog.next })
       }) : null,
-      dialog && dialog.kind === "services" ? /* @__PURE__ */ (0, jsx)(ServicesDialog, { onClose: () => setDialog(null), onField: field }) : null,
+      dialog && dialog.kind === "setup" ? /* @__PURE__ */ (0, jsx)(SetupDialog, {
+        service: dialog.service,
+        onField: (name) => field(name, dialog),
+        onDone: () => setupDone(dialog.service, dialog.next),
+        onCancel: () => setDialog(null)
+      }) : null,
+      dialog && dialog.kind === "ask" ? /* @__PURE__ */ (0, jsx)(AskDialog, {
+        service: dialog.service,
+        onContinue: () => next2(dialog.next),
+        onChange: () => setDialog({ kind: "setup", service: dialog.service, next: dialog.next }),
+        onCancel: () => setDialog(null)
+      }) : null,
       dialog && dialog.kind === "route" ? /* @__PURE__ */ (0, jsx)(RouteDialog, {
         value: dialog.value, routes: dialog.routes ?? routes,
         onPick: (route) => setDialog({ kind: "run", route, value: dialog.value }),
@@ -297,6 +349,8 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         onClose: () => setDialog(null)
       }) : null
     ] });
+
+    return { strip, dialogs };
   }
 
-export { AddDownloads };
+export { useAddDownloads };

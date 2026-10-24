@@ -68,7 +68,9 @@ import { FocusScope, Text, View, motion, useIsFocused } from '@ps5-react/core';
         return false;
       return true;
     };
-    return /* @__PURE__ */ (0, jsx)(FocusScope, { wrap: true, focusKey, onAction, children: /* @__PURE__ */ (0, jsxs)(View, { style: [{ width: 564, flexDirection: "row", flexWrap: "wrap", gap: 12 }, LTR2], children: [
+    // The URL dialog's own Confirm and Cancel sit to the right of the keys: wrapping at the last
+    // column would keep focus here, so that dialog's keyboard lets the move leave.
+    return /* @__PURE__ */ (0, jsx)(FocusScope, { wrap: !url, focusKey, onAction, children: /* @__PURE__ */ (0, jsxs)(View, { style: [{ width: 564, flexDirection: "row", flexWrap: "wrap", gap: 12 }, LTR2], children: [
       characters.map(
         (character, i) => /* @__PURE__ */ (0, jsx)(
           Key,
