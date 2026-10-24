@@ -18,7 +18,7 @@ import { useSections } from './useSections.js';
 import { VERSION } from '../version.js';
 import { FocusScope, Text, View } from '@ps5-react/core';
 
-  var BADGE = /* @__PURE__ */ (0, jsx)(DownloadsBadge, {});
+  var BADGE = /* @__PURE__ */ (0, jsx)(DownloadsBadge, { inset: 14 });
   function Header({ children }) {
     const t2 = useT();
     const { rtl } = useLocale();
