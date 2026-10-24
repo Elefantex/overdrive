@@ -18,6 +18,12 @@ ps5_dir = root / 'ps5-react'
 own = os.getpid()
 found = []
 
+# Process discovery reads /proc, which only Linux has: on macOS and Windows the
+# script starts the preview directly instead of failing before it launches.
+if not Path('/proc').is_dir():
+    print('Old previews not checked: this system has no /proc', flush=True)
+    sys.exit(0)
+
 for entry in Path('/proc').iterdir():
     if not entry.name.isdigit():
         continue
