@@ -15,7 +15,7 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg'} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
   const requests = [], installs = [], enqueued = [];
@@ -62,9 +62,10 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
       };
       setTimeout(() => {
         // The frame's message names the link first, as long as a signed CDN's can be.
-        if (answer === 'refused') return fail(new Error(`Packages.install ${SIGNED_LINK}: The console refused the package. (0x80990085)`));
+        const verdict = typeof answer === 'function' ? answer(request.url) : answer;
+        if (verdict === 'refused') return fail(new Error(`Packages.install ${SIGNED_LINK}: The console refused the package. (0x80990085)`));
         task.snapshot = {state: 'installing', written: 0};
-        if (answer === 'accepted') {
+        if (verdict === 'accepted') {
           task.snapshot = {state: 'installing', written: 1 << 20, total: 1 << 30};
           for (const listener of listeners) listener(task.snapshot);
         }
@@ -85,7 +86,7 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
     sources: {resolve: async entry => ({url: entry.url})},
   });
   const release = {id: 'source-1', filename: format === 'binary' ? 'game.binary' : 'game.' + format,
-    url: redirect ? 'https://host.example/f/abc' : 'https://cdn.example/file.pkg', format, provider: 'vikingfile'};
+    url: redirect ? 'https://host.example/f/abc' : url, format, provider: 'vikingfile'};
   const id = queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data');
   return {queue, id, requests, installs, enqueued};
 }
@@ -134,11 +135,47 @@ test('a host that ignores ranges downloads here', async () => {
 test('a link the console refuses downloads here instead, and is not offered again', async () => {
   const fixture = harness({console: 'refused', format: 'pkg'});
   const job = await settled(fixture);
-  assert.equal(fixture.installs.length, 2, 'the link, then the downloaded file');
-  assert.equal(fixture.installs[1].path, '/data/downloads/files/game.pkg');
+  assert.equal(fixture.installs.length, 3, 'the link in the two shapes it has, then the downloaded file');
+  assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
   assert.equal(fixture.enqueued.length, 1);
   assert.equal(job.streamTried, true);
   assert.equal(job.streamed, undefined);
+});
+
+// The refusal names no cause, so the same file is offered again in the shape that could matter to the
+// console's parser: ".pkg" on the end as a fragment, which the host never sees and no signature covers.
+test('a refused link is offered again with .pkg on the end, and taken there', async () => {
+  const fixture = harness({console: url => url.includes('#') ? 'accepted' : 'refused', format: 'pkg'});
+  const job = await settled(fixture);
+  assert.equal(job.state, 'installed', job.error);
+  assert.equal(job.streamed, true);
+  assert.deepEqual(fixture.installs.map(item => item.url), [
+    'https://cdn.example/file.pkg',
+    'https://cdn.example/file.pkg#game.pkg',
+  ]);
+  assert.equal(fixture.enqueued.length, 0);
+});
+
+// Every shape is tried before the app gives up on the console, and the response the host gives to a
+// plain request is logged while it still may explain the refusal.
+test('a link with a query is offered three ways, with the host\'s own answer beside them', async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...parts) => lines.push(parts.join(' '));
+  let fixture;
+  try {
+    fixture = harness({console: 'refused', format: 'pkg', url: 'https://cdn.example/file.pkg?b=1&a=2'});
+    await settled(fixture);
+  } finally {
+    console.log = original;
+  }
+  assert.deepEqual(fixture.installs.slice(0, 3).map(item => item.url), [
+    'https://cdn.example/file.pkg?b=1&a=2',
+    'https://cdn.example/file.pkg?b=1&a=2#game.pkg',
+    'https://cdn.example/file.pkg?a=2&b=1',
+  ]);
+  assert.equal(fixture.installs[3].path, '/data/downloads/files/game.pkg');
+  assert.ok(lines.some(line => line.includes('the host answers 206 to a plain request')), lines.join('\n'));
 });
 
 // app.log cuts a line at 382 characters: a signed CDN link alone fills one, so the reason and its code

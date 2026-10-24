@@ -443,6 +443,75 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         return "unknown";
       }
     };
+    // How each shape is named in app.log, in the order linkShapes puts them.
+    var SHAPES = ["as it came", "with .pkg on the end", "with its query in sorted order"];
+    // The console's installer refuses some links before it has fetched anything (a signed S3 link from
+    // Vikingfile's storage, 2026-10-25) and the code it gives names no cause that can be looked up. So the
+    // same file is offered again in the shapes that could matter to its parser, cheapest first: the link
+    // as it came; the same with ".pkg" on the end, as a fragment the host never sees and no signature
+    // covers; and the same with its query in sorted order, which is what a signature canonicalises to.
+    // The first shape the console takes is the one it installs.
+    var linkShapes = (url, name) => {
+      const shapes = [url];
+      const plain = String(name || "package").replace(/\.[a-z0-9]+$/i, "").replace(/[^A-Za-z0-9._-]+/g, "-");
+      if (!url.includes("#")) shapes.push(`${url}#${plain}.pkg`);
+      const mark = url.indexOf("?");
+      if (mark > 0) {
+        const sorted = `${url.slice(0, mark)}?${url.slice(mark + 1).split("&").sort().join("&")}`;
+        if (sorted !== url) shapes.push(sorted);
+      }
+      return shapes;
+    };
+    // What the host answers a request with no range and no conditions: the console's refusal names no
+    // cause, and this is the response it would have had in front of it.
+    var describeHost = async (job2, url) => {
+      try {
+        const response = await http.request(url, { maxBytes: 64 * 1024 });
+        const header = (key) => String(response.headers?.[key] ?? "-").slice(0, 80);
+        console.log(`[download-queue] ${job2.id}: the host answers ${response.status} to a plain request, ${header("content-type")}, ${header("content-length")} bytes, ${header("content-disposition")}`);
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: a plain request to the host failed: ${error2.message}`);
+      }
+    };
+    // One ask of the console: it either takes the link or says no.
+    var handOver = async (job2, url, link) => {
+      let task;
+      const accepted = await new Promise((resolve) => {
+        let settled = false, off = null, timer = null;
+        const settle = (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off?.();
+          resolve(value);
+        };
+        try {
+          task = packages.install({ url, name: job2.title, contentId: link.contentId });
+        } catch (error2) {
+          console.log(`[download-queue] ${job2.id}: the console was not asked: ${error2.message}`);
+          settle(false);
+          return;
+        }
+        active2.task = task;
+        // Accepted once the console reports bytes, or has said nothing against it within the watch.
+        off = task.subscribe((progress) => {
+          if (progress.written > 0) settle(true);
+        });
+        if (settled) off();
+        task.done.then(() => settle(true), (error2) => {
+          const text = String(error2?.message || "");
+          const why = consoleFailure(text);
+          // The app stops the task itself once the console has taken the link: that is not a failure,
+          // and neither is a task closed without a code or a reason of its own.
+          if (!/cancel/i.test(text) && !(settled && why === "code=0xnone")) console.log(settled
+            ? `[download-queue] ${job2.id}: the install failed after the console took the link: ${why}`
+            : `[download-queue] ${job2.id}: the console refused the link: ${why}`);
+          settle(false);
+        });
+        timer = setTimeout(() => settle(task.snapshot.state === "installing"), STREAM_WATCH_MS);
+      });
+      return { task, accepted };
+    };
     async function streamed(job2, signal) {
       const options = job2.options;
       const format = String(job2.release.format || "binary").toLowerCase();
@@ -469,39 +538,16 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       console.log(`[download-queue] ${job2.id}: a ${link.kind} PKG${link.total ? ` of ${formatBytes(link.total)}` : ""}, handed to the console's downloads${link.contentId ? ` as ${link.contentId}` : ""}: ${linkForLog(link.url)}`);
       // The install goes to the internal drive: a full one is a refusal that looks like any other.
       console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
-      let task;
-      const accepted = await new Promise((resolve) => {
-        let settled = false, off = null, timer = null;
-        const settle = (value) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          off?.();
-          resolve(value);
-        };
-        try {
-          task = packages.install({ url: link.url, name: job2.title, contentId: link.contentId });
-        } catch (error2) {
-          console.log(`[download-queue] ${job2.id}: the console was not asked: ${error2.message}`);
-          settle(false);
-          return;
-        }
-        active2.task = task;
-        // Accepted once the console reports bytes, or has said nothing against it within the watch.
-        off = task.subscribe((progress) => {
-          if (progress.written > 0) settle(true);
-        });
-        if (settled) off();
-        task.done.then(() => settle(true), (error2) => {
-          const text = String(error2?.message || "");
-          // The app stops the task itself once the console has taken the link: that is not a failure.
-          if (!/cancel/i.test(text)) console.log(settled
-            ? `[download-queue] ${job2.id}: the install failed after the console took the link: ${consoleFailure(text)}`
-            : `[download-queue] ${job2.id}: the console refused the link: ${consoleFailure(text)}`);
-          settle(false);
-        });
-        timer = setTimeout(() => settle(task.snapshot.state === "installing"), STREAM_WATCH_MS);
-      });
+      const shapes = linkShapes(link.url, job2.release.filename || job2.title);
+      let task = null, accepted = false, taken = "";
+      for (let attempt = 0; attempt < shapes.length && !accepted && job2.state !== "pausing"; attempt++) {
+        if (attempt) console.log(`[download-queue] ${job2.id}: offered it again ${SHAPES[attempt]} to the console: ${linkForLog(shapes[attempt])}`);
+        const answer = await handOver(job2, shapes[attempt], link);
+        task = answer.task;
+        accepted = answer.accepted;
+        if (accepted) taken = SHAPES[attempt];
+        else if (attempt === 0) await describeHost(job2, shapes[0]);
+      }
       delete job2.streaming;
       // The console goes on by itself with what it took: the app stops listening, and waits until the
       // installer has let go, since it takes one package at a time (the next one, or this one's
@@ -518,6 +564,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         console.log(`[download-queue] ${job2.id}: downloading it here instead`);
         return false;
       }
+      console.log(`[download-queue] ${job2.id}: the console took it ${taken}`);
       job2.state = "installed";
       job2.streamed = true;
       job2.written = job2.total || 0;
