@@ -34,6 +34,14 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
   // A LinkVault page adds its own check and a mirror page before the host's, so a link capture gets
   // the payload's longest window.
   var LINK_CAPTURE_SECONDS = 300;
+  // Datanodes' dlproxy.uk gateway (FileKeeper's files too) can answer every range HTTP 503 with
+  // Retry-After: 60 for a while. The engine honours it, with its connections down to a few, and the
+  // download sits at 0 MB/s for minutes; a new transfer of the same link, which Pause and Resume
+  // start, goes on at full speed at once (issue #77). So a download from it that gets nothing for
+  // STALL_MS starts over by itself, from what it has written. A third start in a row with nothing
+  // received asks the source for a new link; past STALL_RESTARTS the engine's own retries decide.
+  var STALL_MS = 9e4;
+  var STALL_RESTARTS = 10;
   // The folder an extraction is written to, and its game's under homebrew: the source's file name
   // without the ".binary" a source of unknown format downloads under. Jobs extracted before used it
   // with that suffix, so ownedPaths claims both.
@@ -128,6 +136,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     packages,
     releasesOf,
     browserCapture,
+    stallMs = STALL_MS,
     wait = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))
   }) {
     const legacy = `${dataDir}/overdrive/downloads.json`;
@@ -256,15 +265,11 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       destination: `${root2}/downloads/extracted/${release.filename}`,
       nextAction: "extracted"
     } : formats.artifact(release, root2);
-    // Datanodes' dlproxy.uk gateway (FileKeeper's files too) can answer every range HTTP 503 with
-    // Retry-After: 60 for a while. The engine honours it, with its connections down to a few, and the
-    // download sits at 0 MB/s for minutes; a new transfer of the same link, which Pause and Resume
-    // start, goes on at full speed at once (issue #77). So a download from it that gets nothing for
-    // STALL_MS starts over by itself, from what it has written. A third start in a row with nothing
-    // received asks the source for a new link; past STALL_RESTARTS the engine's own retries decide.
-    var STALL_MS = 9e4;
-    var STALL_RESTARTS = 10;
     function restartsAfterStall(job2) {
+      // The hosts whose gateway answers every range HTTP 503 for a while: DataNodes and FileKeeper
+      // both. Named by kind too, since the resolved URL of a captured link need not be the gateway.
+      const source2 = job2.parts ? job2.currentSource : job2.release;
+      if (source2 && ["filekeeper", "datanodes"].includes(sourceKind(source2))) return true;
       try {
         return /(?:^|\.)dlproxy\.uk$/.test(webURL(job2.options?.url).host);
       } catch {
@@ -272,19 +277,22 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       }
     }
     function stallWatch(job2, task) {
-      let moved = Date.now(), seen = -1;
+      let moved = Date.now(), best = -1;
       return (progress) => {
         const bytes = (progress.received || 0) + (progress.completedBytes ?? progress.written ?? 0);
-        if (bytes !== seen) {
-          if (seen >= 0 && job2.stalls) {
+        // Only a new high counts: a range the engine retries drops `received` back to what the file
+        // already holds, and with a plain "changed" test every one of those reset the wait, so a
+        // download 503-ing range after range never reached it (issue #77, Narci115's 4.7 MB log).
+        if (bytes > best) {
+          if (best >= 0 && job2.stalls) {
             console.log(`[download-queue] ${job2.id}: receiving again after ${job2.stalls} restart(s)`);
             delete job2.stalls;
           }
-          seen = bytes;
+          best = bytes;
           moved = Date.now();
           return;
         }
-        if (active2?.restarting || Date.now() - moved < STALL_MS || !["connecting", "downloading"].includes(progress.state) || !restartsAfterStall(job2)) return;
+        if (active2?.restarting || Date.now() - moved < stallMs || !["connecting", "downloading"].includes(progress.state) || !restartsAfterStall(job2)) return;
         if ((job2.stalls || 0) >= STALL_RESTARTS) return;
         job2.stalls = (job2.stalls || 0) + 1;
         // Only FileKeeper's link comes from a form the app posts again; DataNodes' needs the browser.
