@@ -2,7 +2,7 @@
 // reconstructed from the esbuild bundle in eboot.bin
 
 import { pausedSource } from './paused-hosts.js';
-import { releaseSets } from './release-sets.js';
+import { isDlc, releaseSets } from './release-sets.js';
 
   var KEPT2 = 6;
   function createReleaseCache(read) {
@@ -19,7 +19,9 @@ import { releaseSets } from './release-sets.js';
         // A paused browser host's sources are left out here, before any screen sees them. A source that
         // names its own file's title ID (another region's edition, tools/import-superpsx.py) keeps it:
         // the queue downloads by it, and the browser capture looks for it in the file's name.
-        releases = releaseSets(parsed.filter((release) => !pausedSource(release)).map((release) => ({ titleId, ...release })));
+        // A DLC-only pack (the scene's dlc_emu kits) goes too: nothing on the console installs it, so
+        // offering it only leads to a download that then says there was nothing to install.
+        releases = releaseSets(parsed.filter((release) => !pausedSource(release) && !isDlc(release)).map((release) => ({ titleId, ...release })));
         if (games2.size === KEPT2) games2.delete(games2.keys().next().value);
       }
       games2.delete(file);
