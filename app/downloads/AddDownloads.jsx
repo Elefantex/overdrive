@@ -1,6 +1,7 @@
 // The Downloads page's own section for downloads that do not come from the catalog (issues #107,
-// #89, #20): a pasted link, a torrent through the user's own client or TorBox, and the setup for
-// both services. A file that has to be fetched first (TorBox, qBittorrent) shows its progress in a
+// #89, #20): a pasted link, a torrent through the user's own qBittorrent, links and magnets through
+// TorBox, and the setup for both services — each card one service, so a torrent never goes to one
+// the user did not press. A file that has to be fetched first (TorBox, qBittorrent) shows it in a
 // dialog with Cancel; once the service names the file, it joins the normal queue, on the drive
 // chosen in Settings.
 //
@@ -110,6 +111,8 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsxs)(Dialog, { onBack: onCancel, children: [
       /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 34, fontWeight: 600, color: colors.fg }, children: t2("add.setupTitle", { service: serviceName(t2, service) }) }),
       /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("add.setupBody") }),
+      // Whoever has no client at all can still send a magnet to TorBox, from its own card.
+      service === "qbittorrent" ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: colors.subtle, lineHeight: 28 }, children: t2("add.setupClientHint") }) : null,
       rows.map((row) => /* @__PURE__ */ (0, jsxs)(View, {
         focusKey: `downloads:setup:${row.field}`,
         onPress: () => onField(row.field),
@@ -139,20 +142,6 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.modify"), icon: "settings", variant: "outline", onPress: onChange }),
         /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "ghost", onPress: onCancel })
       ] })
-    ] });
-  }
-
-  // Picks the service a magnet goes to, when both are set up.
-  function RouteDialog({ value, routes, onPick, onClose }) {
-    const t2 = useT();
-    return /* @__PURE__ */ (0, jsxs)(Dialog, { width: 900, onBack: onClose, children: [
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 32, fontWeight: 600, color: colors.fg }, children: t2("add.routeTitle") }),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, numberOfLines: 2, ellipsizeMode: "middle", lineHeight: 30 }, children: value }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: routes.map((route) => /* @__PURE__ */ (0, jsx)(Button2, {
-        label: serviceName(t2, route), icon: route === "torbox" ? "torbox" : "utorrent", size: "lg",
-        focusKey: `downloads:route:${route}`, onPress: () => onPick(route)
-      }, route)) }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row" }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "outline", size: "sm", onPress: onClose }) })
     ] });
   }
 
@@ -208,9 +197,8 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
     const t2 = useT();
     const services = useServices();
     const { focusLater } = useNavActions();
-    const routes = [services.torbox ? "torbox" : null, services.address ? "qbittorrent" : null].filter(Boolean);
     const [dialog, setDialog] = useState(null);
-    // { kind: "link" | "torrent" | "torbox" | "setup" | "ask" | "route" | "run" | "field", ... }
+    // { kind: "link" | "torrent" | "torbox" | "setup" | "ask" | "run" | "field", ... }
     // A URL dialog closes itself once its submit returns: a submit that opened the next dialog has
     // already replaced it by then, and this leaves that one alone.
     const closeIf = (kind) => setDialog((current) => current && current.kind === kind ? null : current);
@@ -233,22 +221,16 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       const parsed = linkInput(value);
       if (kind !== "torrent" && parsed.kind === "magnet") kind = "torrent";
       if (kind === "torrent") {
-        // A magnet is for either service; a file ending in .torrent is the client's own kind of
-        // link, which TorBox has no call for.
+        // This card is the client's: a magnet or a .torrent link, fetched by qBittorrent. TorBox
+        // has its own card, and never takes a torrent on this one's behalf.
         const torrent = /\.torrent(?:[?#]|$)/i.test(parsed.value);
         if (parsed.kind !== "magnet" && !torrent) throw new Error(t2("add.magnetOnly"));
-        const usable = parsed.kind === "magnet" ? routes : routes.filter((route) => route === "qbittorrent");
-        if (!usable.length) {
-          if (routes.length) throw new Error(t2("add.torrentLinkNeedsClient"));
+        if (!services.address) {
           // Nothing is set up yet: the guide asks for the client, then carries on with the link.
           setDialog({ kind: "setup", service: "qbittorrent", next: { kind: "torrent", value: parsed.value } });
           return;
         }
-        if (usable.length > 1) {
-          setDialog({ kind: "route", value: parsed.value, routes: usable });
-          return;
-        }
-        setDialog({ kind: "run", route: usable[0], value: parsed.value });
+        setDialog({ kind: "run", route: "qbittorrent", value: parsed.value });
         return;
       }
       if (kind === "torbox") {
@@ -264,17 +246,13 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       add({ url: parsed.value, filename: parsed.name });
     };
 
-    // A card: its service's guided setup the first time, a "change it?" question after.
+    // A card: its service's guided setup the first time, a "change it?" question after. Each card
+    // is one service — the torrent card is qBittorrent's, the TorBox card TorBox's — so a torrent
+    // never goes to a service the user did not pick by pressing that card.
     const card = (kind) => {
       const service = kind === "torbox" ? "torbox" : "qbittorrent";
       const set = kind === "torbox" ? !!services.torbox : !!services.address;
-      if (!set) {
-        // A torrent with TorBox already set up needs no client: that service can do it.
-        if (kind === "torrent" && services.torbox) setDialog({ kind });
-        else setDialog({ kind: "setup", service, next: { kind } });
-        return;
-      }
-      setDialog({ kind: "ask", service, next: { kind } });
+      setDialog(set ? { kind: "ask", service, next: { kind } } : { kind: "setup", service, next: { kind } });
     };
 
     // The fields of a service, opened from its setup.
@@ -297,8 +275,8 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
       // The focus ring is drawn 7 px outside the card, and the scroll view clips what it has no room
       // for: the first card sat flush with its left edge, so the ring was cut and looked broken.
       /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 14, paddingLeft: 12 }, children: [
-        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "globe", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
-        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "utorrent", title: t2("add.torrent"), detail: routes.length ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: () => card("torrent") }),
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "link", title: t2("add.link"), detail: t2("add.linkDetail"), focusKey: "downloads:add:link", onPress: () => setDialog({ kind: "link" }) }),
+        /* @__PURE__ */ (0, jsx)(AddCard, { icon: "qbittorrent", title: t2("add.torrent"), detail: services.address ? t2("add.torrentDetail") : t2("add.torrentSetup"), focusKey: "downloads:add:torrent", onPress: () => card("torrent") }),
         /* @__PURE__ */ (0, jsx)(AddCard, { icon: "torbox", title: t2("add.torbox"), detail: services.torbox ? t2("add.torboxDetail") : t2("add.torboxSetup"), focusKey: "downloads:add:torbox", onPress: () => card("torbox") })
       ] })
     ] });
@@ -336,11 +314,6 @@ import { FocusScope, Http, Text, View } from '@ps5-react/core';
         onContinue: () => next2(dialog.next),
         onChange: () => setDialog({ kind: "setup", service: dialog.service, next: dialog.next }),
         onCancel: () => setDialog(null)
-      }) : null,
-      dialog && dialog.kind === "route" ? /* @__PURE__ */ (0, jsx)(RouteDialog, {
-        value: dialog.value, routes: dialog.routes ?? routes,
-        onPick: (route) => setDialog({ kind: "run", route, value: dialog.value }),
-        onClose: () => setDialog(null)
       }) : null,
       dialog && dialog.kind === "run" ? /* @__PURE__ */ (0, jsx)(RunDialog, {
         route: dialog.route, value: dialog.value,
