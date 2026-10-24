@@ -113,7 +113,8 @@ import { FocusScope, Text, View } from '@ps5-react/core';
               NavItem,
               {
                 focusKey: keyOf("favorites"),
-                icon: "star",
+                icon: "heart",
+                iconFill: shown === "favorites",
                 compact: true,
                 current: shown === "favorites",
                 onPress: on.favorites,
