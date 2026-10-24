@@ -354,7 +354,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
             await task.done;
             installed.push(path);
           } catch (error2) {
-            console.log(`[download-queue] install refused ${path}:`, consoleReason(error2.message));
+            console.log(`[download-queue] install refused ${path}: ${consoleFailure(error2.message)}`);
             if (!backport(path) || paths.every(backport)) throw error2;
           } finally {
             off();
@@ -398,24 +398,54 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
           continue;
         }
         // A host that ignores the range sends the whole file: the console's downloader needs ranges too.
-        if (response.status !== 206) return null;
+        if (response.status !== 206) {
+          console.log(`[download-queue] ${job2.id}: not streamed, the host answered ${response.status} instead of a range`);
+          return null;
+        }
         const head = await response.text();
         const ps4 = head.startsWith("\x7FCNT"), ps5 = head.startsWith("\x7FFIH");
         const contentId = ps4 ? head.slice(0, 256).match(PS4_CONTENT_ID)?.[0] : "";
-        if (!ps4 && !ps5 || contentId === void 0) return null;
+        // Said out loud: a silent decline leaves "downloading it here instead" with no reason next to it.
+        if (!ps4 && !ps5) {
+          console.log(`[download-queue] ${job2.id}: not streamed, its first bytes are not a PKG`);
+          return null;
+        }
+        if (contentId === void 0) {
+          console.log(`[download-queue] ${job2.id}: not streamed, its PS4 header names no content ID`);
+          return null;
+        }
         return { url, contentId, kind: ps4 ? "PS4" : "PS5" };
       }
       return null;
     }
-    // The console's own words: its error names the link first ("Packages.install <url>: <reason>
-    // (0x<code>)"), and app.log cuts a line at 382 characters, so a signed CDN link filled the line and
-    // the reason went missing exactly when it was wanted (a Wolverine fPKG, 2026-10-25). The link is
-    // logged already, masked, on the line before.
-    var consoleReason = (message) => String(message || "").replace(/^Packages\.install \S+: /, "");
+    // Why the console said no: its code is the only thing that names the cause, and its error arrives as
+    // "Packages.install <url>: <reason> (0x<code>)". app.log cuts a line at 382 characters, so a signed
+    // CDN link filled the line and both the reason and the code went missing exactly when they were
+    // wanted (a Wolverine fPKG, 2026-10-25). The link is logged already, masked, on the line before.
+    var consoleFailure = (message) => {
+      const text = String(message || "");
+      const code = text.match(/\(0x([0-9a-zA-Z]+)\)/)?.[1];
+      const reason = text.replace(/^Packages\.install\s+\S+:?\s*/i, "").replace(/\s*\(0x[0-9a-zA-Z]+\)\s*$/i, "").trim();
+      return `code=0x${code || "none"}${reason ? ` ${reason}` : ""}`;
+    };
+    // What the console's own install has to work with: it installs to the internal drive, not to this
+    // job's, and a full one is refused before anything is fetched.
+    var internalFree = () => {
+      try {
+        return formatBytes(fs.diskUsage("/data").free);
+      } catch {
+        return "unknown";
+      }
+    };
     async function streamed(job2, signal) {
       const options = job2.options;
       const format = String(job2.release.format || "binary").toLowerCase();
-      if (!canInstall() || job2.streamTried || job2.written || job2.output || !STREAMABLE.includes(format) || !options?.url || options.pieces || Object.keys(options.headers || {}).length || fs.exists(`${job2.downloadDestination}.part`)) return false;
+      if (!canInstall() || job2.streamTried || job2.written || job2.output || !STREAMABLE.includes(format) || !options?.url || options.pieces || Object.keys(options.headers || {}).length) return false;
+      // A part file means this job already began downloading here: the console would start from zero.
+      if (fs.exists(`${job2.downloadDestination}.part`)) {
+        console.log(`[download-queue] ${job2.id}: not streamed, it already has a part file here`);
+        return false;
+      }
       let link;
       try {
         link = await pkgLink(job2, signal);
@@ -431,6 +461,8 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       job2.message = "";
       change();
       console.log(`[download-queue] ${job2.id}: a ${link.kind} PKG, handed to the console's downloads${link.contentId ? ` as ${link.contentId}` : ""}: ${linkForLog(link.url)}`);
+      // The install goes to the internal drive: a full one is a refusal that looks like any other.
+      console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
       let task;
       const accepted = await new Promise((resolve) => {
         let settled = false, off = null, timer = null;
@@ -455,7 +487,11 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         });
         if (settled) off();
         task.done.then(() => settle(true), (error2) => {
-          if (!settled) console.log(`[download-queue] ${job2.id}: the console refused the link: ${consoleReason(error2.message)}`);
+          const text = String(error2?.message || "");
+          // The app stops the task itself once the console has taken the link: that is not a failure.
+          if (!/cancel/i.test(text)) console.log(settled
+            ? `[download-queue] ${job2.id}: the install failed after the console took the link: ${consoleFailure(text)}`
+            : `[download-queue] ${job2.id}: the console refused the link: ${consoleFailure(text)}`);
           settle(false);
         });
         timer = setTimeout(() => settle(task.snapshot.state === "installing"), STREAM_WATCH_MS);

@@ -154,9 +154,25 @@ test('a refusal is logged with its reason and code, not the link in front of the
   }
   const refusal = lines.find(line => line.includes('the console refused the link:'));
   assert.ok(refusal, 'the refusal is logged');
-  assert.equal(refusal.split('the console refused the link: ')[1], 'The console refused the package. (0x80990085)');
+  assert.equal(refusal.split('the console refused the link: ')[1], 'code=0x80990085 The console refused the package.');
   const whole = lines.find(line => line.includes(SIGNED_LINK));
   assert.ok(!whole, `the link never reaches app.log whole: ${whole?.slice(0, 200)}`);
+});
+
+// A file that turns out not to be a PKG is not a failure, but the log has to say so: a bare
+// "downloading it here instead" left the reason unnamed in every report until now.
+test('a file whose first bytes are not a PKG says so before downloading here', async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...parts) => lines.push(parts.join(' '));
+  try {
+    harness({head: RAR_HEAD, format: 'pkg'});
+    for (const until = Date.now() + 2000; Date.now() < until && !lines.some(line => line.includes('not streamed'));)
+      await new Promise(resolve => setTimeout(resolve, 5));
+  } finally {
+    console.log = original;
+  }
+  assert.ok(lines.some(line => line.includes('not streamed, its first bytes are not a PKG')), lines.join('\n'));
 });
 
 test('a source of a declared archive format is never probed', async () => {
