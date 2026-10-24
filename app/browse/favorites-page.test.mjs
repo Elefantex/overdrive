@@ -8,7 +8,7 @@ const sectionForFocus = (key) => /^(catalog|card|chip):/.test(key ?? '') ? 'brow
   : /^spotlight:/.test(key ?? '') ? 'discover' : null;
 const tokens = Object.fromEntries([
   'Catalog', 'NearSection', 'FocusedSection', 'Footer', 'Spotlight',
-  'PopularRail', 'CdnRail', 'ContinueRow', 'RecentRow', 'TopCharts',
+  'PopularRail', 'AddedRail', 'CdnRail', 'ContinueRow', 'RecentRow', 'TopCharts',
   'GenreRail', 'FolderInstallNotice', 'FocusScope', 'ScrollView', 'View', 'ReleaseImages'
 ].map((name) => [name, name]));
 
@@ -38,7 +38,7 @@ test('Favorites has an isolated scroll view without Discover sections', () => {
   assert.equal(hiddenDiscover.type, DiscoverContent);
   assert.equal(hiddenDiscover.props.hidden, true);
   assert.equal(persistentCatalog.type, 'NearSection');
-  assert.equal(persistentCatalog.props.index, 7);
+  assert.equal(persistentCatalog.props.index, 8);
   assert.equal(persistentCatalog.props.children.type, 'Catalog');
   assert.equal(footer, null);
 
@@ -61,7 +61,10 @@ test('Favorites has an isolated scroll view without Discover sections', () => {
   assert.equal(visible.props.inert, false);
   assert.equal(visible.props.children.props.when, false);
   assert.equal(visible.props.children.props.children.props.style.display, 'flex');
-  assert.equal(visible.props.children.props.children.props.children.length, 7);
+  const discover = visible.props.children.props.children.props.children;
+  assert.equal(discover.length, 8);
+  assert.equal(discover[2].props.index, 2);
+  assert.equal(discover[2].props.children.type, 'AddedRail', 'Recently added keeps its place under Popular');
 
   store.filters = { wishlist: true };
   assert.equal(Sections().props.children.key, 'favorites-scroll');

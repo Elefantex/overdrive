@@ -6,6 +6,7 @@ import '../assets/JetBrainsMono-Regular.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { memo } from 'react';
 
+import { AddedRail } from './AddedRail.jsx';
 import { Catalog } from './Catalog.jsx';
 import { CdnRail } from './CdnRail.jsx';
 import { ContinueRow } from './ContinueRow.jsx';
@@ -63,11 +64,12 @@ import { FocusScope, ReleaseImages, ScrollView, Text, View, useFocus } from '@ps
               ] })
             }),
             /* @__PURE__ */ (0, jsx)(NearSection, { index: 1, children: /* @__PURE__ */ (0, jsx)(PopularRail, {}) }),
-            /* @__PURE__ */ (0, jsx)(NearSection, { index: 2, children: /* @__PURE__ */ (0, jsx)(CdnRail, {}) }),
-            /* @__PURE__ */ (0, jsx)(NearSection, { index: 3, children: /* @__PURE__ */ (0, jsx)(ContinueRow, {}) }),
-            /* @__PURE__ */ (0, jsx)(NearSection, { index: 4, children: /* @__PURE__ */ (0, jsx)(RecentRow, {}) }),
-            /* @__PURE__ */ (0, jsx)(NearSection, { index: 5, children: /* @__PURE__ */ (0, jsx)(TopCharts, {}) }),
-            /* @__PURE__ */ (0, jsx)(NearSection, { index: 6, children: /* @__PURE__ */ (0, jsx)(GenreRail, {}) })
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 2, children: /* @__PURE__ */ (0, jsx)(AddedRail, {}) }),
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 3, children: /* @__PURE__ */ (0, jsx)(CdnRail, {}) }),
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 4, children: /* @__PURE__ */ (0, jsx)(ContinueRow, {}) }),
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 5, children: /* @__PURE__ */ (0, jsx)(RecentRow, {}) }),
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 6, children: /* @__PURE__ */ (0, jsx)(TopCharts, {}) }),
+            /* @__PURE__ */ (0, jsx)(NearSection, { index: 7, children: /* @__PURE__ */ (0, jsx)(GenreRail, {}) })
           ]
         })
       })
@@ -106,7 +108,7 @@ import { FocusScope, ReleaseImages, ScrollView, Text, View, useFocus } from '@ps
         children: [
           /* @__PURE__ */ (0, jsx)(FocusedSection, {}),
           /* @__PURE__ */ (0, jsx)(DiscoverContent, { hidden: favoritesOnly }),
-          /* @__PURE__ */ (0, jsx)(NearSection, { index: 7, keepImages: !favoritesOnly && store.browsePanel === 'search', children: /* @__PURE__ */ (0, jsx)(Catalog, {}) }),
+          /* @__PURE__ */ (0, jsx)(NearSection, { index: 8, keepImages: !favoritesOnly && store.browsePanel === 'search', children: /* @__PURE__ */ (0, jsx)(Catalog, {}) }),
           !favoritesOnly ? /* @__PURE__ */ (0, jsx)(Footer, {}) : null
         ]
       }, favoritesOnly ? 'favorites-scroll' : 'library-scroll')

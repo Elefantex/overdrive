@@ -14,11 +14,12 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { ReleaseImages, useFocus } from '@ps5-react/core';
 
   // The sections in page order, by the prefix of their elements' focus keys.
-  var SECTIONS = { spotlight: 0, popular: 1, cdn: 2, continue: 3, recent: 4, chart: 5, genre: 6, card: 7, catalog: 7, chip: 7 };
+  var CATALOG = 8;
+  var SECTIONS = { spotlight: 0, popular: 1, added: 2, cdn: 3, continue: 4, recent: 5, chart: 6, genre: 7, card: CATALOG, catalog: CATALOG, chip: CATALOG };
   // Infer Discover/Library region from focus without resetting the shared scroll position.
   function headerSectionForFocus(focusedKey) {
     const index = SECTIONS[String(focusedKey ?? "").split(":")[0]];
-    return index === void 0 ? null : index === 7 ? "browse" : "discover";
+    return index === void 0 ? null : index === CATALOG ? "browse" : "discover";
   }
 
   var NEAR = 1;
@@ -35,8 +36,8 @@ import { ReleaseImages, useFocus } from '@ps5-react/core';
   // near or far. Focus elsewhere (the header, another screen) leaves the last section as it was.
   function activateBrowseSection() {
     // Search may open before Library takes focus; retain the Library image scope immediately.
-    if (current === 7) return;
-    current = 7;
+    if (current === CATALOG) return;
+    current = CATALOG;
     notify();
   }
   function FocusedSection() {
