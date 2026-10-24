@@ -84,8 +84,10 @@ import { FocusScope, Text, View, motion, useIsFocused } from '@ps5-react/core';
           character
         )
       ),
-      // The page toggle stays mounted across the two pages, so the focus stays on it: press again to go back.
-      /* @__PURE__ */ (0, jsx)(
+      // The URL keyboard's second page: the toggle stays mounted across the two pages, so the focus
+      // stays on it (press again to go back). Search needs no punctuation, and the key moved the
+      // rows there, so it has none.
+      url ? /* @__PURE__ */ (0, jsx)(
         Key,
         {
           compact: url,
@@ -96,7 +98,7 @@ import { FocusScope, Text, View, motion, useIsFocused } from '@ps5-react/core';
           onKey
         },
         "page"
-      ),
+      ) : null,
       /* @__PURE__ */ (0, jsx)(
         Key,
         {
