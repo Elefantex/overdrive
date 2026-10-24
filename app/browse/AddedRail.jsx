@@ -30,7 +30,7 @@ import { RowCard, useRowWindow, useSectionShown } from './near.js';
       setFilters(NO_FILTERS);
       setQuery("");
       setSort("added");
-      focusLater("catalog:toggle:filters");
+      focusLater("catalog:sort");
     };
     return /* @__PURE__ */ (0, jsx)(GameRail, { title: t2("browse.recentlyAdded"), onSeeAll: seeAll, seeAllKey: "added:all", children: ADDED.map((game, index) => {
       const key = `added:${game.id}`;

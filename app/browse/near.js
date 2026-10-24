@@ -14,14 +14,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { ReleaseImages, useFocus } from '@ps5-react/core';
 
   // The sections in page order, by the prefix of their elements' focus keys.
-  var CATALOG = 8;
-  var SECTIONS = { spotlight: 0, popular: 1, added: 2, cdn: 3, continue: 4, recent: 5, chart: 6, genre: 7, card: CATALOG, catalog: CATALOG, chip: CATALOG };
-  // Infer Discover/Library region from focus without resetting the shared scroll position.
-  function headerSectionForFocus(focusedKey) {
-    const index = SECTIONS[String(focusedKey ?? "").split(":")[0]];
-    return index === void 0 ? null : index === CATALOG ? "browse" : "discover";
-  }
-
+  var SECTIONS = { spotlight: 0, popular: 1, added: 2, cdn: 3, continue: 4, recent: 5, chart: 6, genre: 7, card: 8, catalog: 8, chip: 8 };
   var NEAR = 1;
   var current = 0;
   var listeners = /* @__PURE__ */ new Set();
@@ -34,12 +27,6 @@ import { ReleaseImages, useFocus } from '@ps5-react/core';
   var SectionIndex = (0, createContext)(-1);
   // Rendered once by the page: follows focus and tells the sections, which re-render only when they turn
   // near or far. Focus elsewhere (the header, another screen) leaves the last section as it was.
-  function activateBrowseSection() {
-    // Search may open before Library takes focus; retain the Library image scope immediately.
-    if (current === CATALOG) return;
-    current = CATALOG;
-    notify();
-  }
   function FocusedSection() {
     const { focusedKey } = useFocus();
     (0, useEffect)(() => {
@@ -50,18 +37,17 @@ import { ReleaseImages, useFocus } from '@ps5-react/core';
     }, [focusedKey]);
     return null;
   }
-  function NearSection({ index, keepImages = false, children }) {
+  function NearSection({ index, children }) {
     const far = (focused) => Math.abs(rank(index) - rank(focused)) > NEAR;
-    const [released, setReleased] = (0, useState)(() => !keepImages && far(current));
+    const [released, setReleased] = (0, useState)(() => far(current));
     (0, useEffect)(() => {
-      // Keep grid images pinned while the search keyboard owns focus.
-      const listener = (focused) => setReleased(!keepImages && far(focused));
+      const listener = (focused) => setReleased(far(focused));
       listeners.add(listener);
       listener(current);
       return () => {
         listeners.delete(listener);
       };
-    }, [index, keepImages]);
+    }, [index]);
     return /* @__PURE__ */ (0, jsx)(SectionIndex.Provider, { value: index, children: /* @__PURE__ */ (0, jsx)(ReleaseImages, { when: released, children }) });
   }
   // Called by a section that can have nothing to show, before it returns null.
@@ -88,4 +74,4 @@ import { ReleaseImages, useFocus } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsx)(ReleaseImages, { when: far, children });
   }
 
-export { FocusedSection, NearSection, RowCard, activateBrowseSection, headerSectionForFocus, useRowWindow, useSectionShown };
+export { FocusedSection, NearSection, RowCard, useRowWindow, useSectionShown };
