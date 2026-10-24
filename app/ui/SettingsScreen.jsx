@@ -1,6 +1,7 @@
 
 import '../assets/Inter-Regular.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
+import { useState } from 'react';
 import { formatPercent2 } from '../i18n/core.js';
 import { chooseLanguage, languageChoice, systemLocale, useT } from '../i18n/index.js';
 import { LOCALES } from '../i18n/locales.js';
@@ -10,6 +11,8 @@ import { colors } from './colors.js';
 import { LEVELS, setVibrationLevel, useVibrationLevel } from './haptics.js';
 import { LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.js';
+import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
+import { driveName, storageRoots } from '../state/downloads.js';
 import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
   var nameOf = (code) => LOCALES.find((locale2) => locale2.code === code).name;
@@ -67,6 +70,35 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.deletePackagesDetail") })
       ] }),
       /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [true, false].map((value) => /* @__PURE__ */ (0, jsx)(PackagesSegment, { on: value, chosen: value === on }, String(value))) })
+    ] });
+  }
+  // The drive downloads go to (issue #103), laid out like the speed limit: every drive in view,
+  // plus Automatic for the app's own pick. It shows only when there is more than one drive.
+  function DiskSegment({ root, label, chosen }) {
+    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:disk:${root ?? "auto"}`, onPress: () => setDownloadRoot(root), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
+      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: label })
+    ] });
+  }
+  function DiskForDownloads() {
+    const t2 = useT();
+    const root2 = useDownloadRoot();
+    const [roots] = (0, useState)(() => {
+      try {
+        return storageRoots();
+      } catch {
+        return ["/data"];
+      }
+    });
+    if (roots.length < 2) return null;
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
+      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
+        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.disk") })
+        ] }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.diskDetail") })
+      ] }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [null, ...roots].map((value) => /* @__PURE__ */ (0, jsx)(DiskSegment, { root: value, chosen: value === root2, label: value ? driveName(value) : t2("settings.diskAuto") }, value ?? "auto")) })
     ] });
   }
   // The vibration level (issue #32), laid out like the speed limit: every step in view, Cross picks.
@@ -127,6 +159,7 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
                   children: [
                     /* @__PURE__ */ (0, jsx)(SectionLabel, { icon: "download", title: t2("settings.downloads") }),
                     /* @__PURE__ */ (0, jsx)(SpeedLimit, {}),
+                    /* @__PURE__ */ (0, jsx)(DiskForDownloads, {}),
                     /* @__PURE__ */ (0, jsx)(DeletePackages, {}),
                     /* @__PURE__ */ (0, jsx)(SectionLabel, { title: t2("settings.controller") }),
                     /* @__PURE__ */ (0, jsx)(VibrationLevel, {})
