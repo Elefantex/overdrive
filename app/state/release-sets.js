@@ -24,6 +24,9 @@ import { archivePassword } from './archive-password.js';
   // a fakelib of replacement modules) or a DLC package, neither of which a console installs on its own.
   // A label naming the game as well ("Game (DLCs)", "Game + DLC") is the game, so it is not one.
   var isDlc = ({ label }) => /\bDLCs?\b/i.test(label || "") && !/\b(?:game|full)\b|\+\s*(?:all\s+)?DLCs?\b|\bwith\s+(?:all\s+)?DLCs?\b|\bincl/i.test(label);
+  // The DLC-only sources a console cannot install: the scene's dlc_emu kits (an ini and a fakelib of
+  // replacement modules) and DLC images. A DLC in a PS5 package installs like any other, so it stays.
+  var isDlcPack = (release) => isDlc(release) && release.format !== "pkg" && release.format !== "fpkg";
   var VOLUME_NAME =/\bpart(\d+)\.(?:rar|7z|zip)\b/i;
   function missingVolumes(parts, declaredBytes) {
     if (parts.some((part, index) => part.number !== index + 1)) return "gap";
@@ -93,4 +96,4 @@ import { archivePassword } from './archive-password.js';
   };
   var sameRelease = (saved, release) => saved.id === release.id || Boolean(link(saved)) && link(saved) === link(release) && saved.parts?.length === release.parts?.length;
 
-export { isDlc, isPatchOnly, releaseSets, sameRelease };
+export { isDlc, isDlcPack, isPatchOnly, releaseSets, sameRelease };
