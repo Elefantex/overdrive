@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — package links served by the app
+
+- `Packages.proxy({url, total, file})` (ABI v21) returns an `http://127.0.0.1` link serving `url` for
+  the console's download queue. The console asks a link with a `HEAD` first, and a pre-signed S3 or
+  R2 link answers it 403 (it signs only the `GET`), so the console refused it with `0x80B22403`. The
+  app answers the `HEAD` from the size it read and fetches each `GET` range from the origin. The link
+  works while the app runs. A checkpoint's identity no longer includes the storage root's device and
+  inode, which a USB drive changes at every boot; a checkpoint written with the old identity still
+  resumes.
+
 ## Unreleased — debrid download nodes
 
 - A download whose link is a debrid service's CDN (`tb-cdn.io`, `real-debrid.com`, `premiumize.me`)

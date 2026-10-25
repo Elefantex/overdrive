@@ -1,7 +1,7 @@
 // Copyright (C) 2026 half144 and PS5 React contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional attribution term: see LICENSE-ATTRIBUTION.
-// Native API contract (ABI v20) between the hosts and `@ps5-react/core`. The input actions hosts
+// Native API contract (ABI v21) between the hosts and `@ps5-react/core`. The input actions hosts
 // pass to `__ps5ReactDispatch` are a separate contract with its own version (runtime/js/input.js).
 //
 // host_api.cpp (shared) installs `globalThis.__ps5ReactNative` through
@@ -86,6 +86,9 @@
 //                                  the console's install service (PS5 only, needs the payload loader on 9021);
 //                                  ABI v20: `path` may be an http(s) link the console downloads itself, with
 //                                  a PS4 package's `contentId`
+//   packages.proxy(url, total, file) ABI v21; "http://127.0.0.1:<port>/<token>/<file>.pkg" serving `url`
+//                                  (`total` bytes) for the console's queue: HEAD answered here, GET ranges
+//                                  fetched from `url`; works while the app runs (see pkg_proxy.hpp)
 //   packages.cancel(id)            stops reporting; an install the console accepted carries on
 //   packages.poll()                state/error/contentId/status/written/total; consumes terminal results
 //   network.version()              transport version string

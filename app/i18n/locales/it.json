@@ -183,6 +183,7 @@
   "downloads.installRequested": "Installazione richiesta. Chiudi Overdrive per completare: ShadowMount installa quando nessun gioco è aperto.",
   "downloads.installed": "Installato. Lo trovi nella schermata Home.",
   "downloads.streamed": "La PS5 lo scarica e lo installa: seguilo nei suoi Download. Puoi chiudere Overdrive.",
+  "downloads.streamedProxy": "La PS5 lo scarica e lo installa tramite Overdrive: tieni Overdrive aperto finché non finisce nei Download della PS5.",
   "downloads.installedFreed": "Installato. Il PKG è stato eliminato: {size} liberati.",
   "downloads.notice.captured": "Link acquisito, torna su Overdrive",
   "downloads.notice.confirm": "File trovato, confermalo su Overdrive",

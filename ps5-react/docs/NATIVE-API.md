@@ -551,6 +551,17 @@ characters at offset 0x40 of its header, which the app reads with a ranged
 request); a PS5 one goes without. Its progress shows in the console's
 Downloads; `cancel()` stops reporting here only.
 
+`Packages.proxy({url, total, file})` (ABI v21) returns
+`http://127.0.0.1:<port>/<token>/<file>.pkg`, a link to `url` served by the
+app for the console's queue. The console asks a link with a `HEAD` before it
+fetches, and a pre-signed S3 or R2 link signs only the `GET` it was made for:
+the origin answers that `HEAD` 403 and the console refuses the package
+(`0x80B22403`). The app answers the `HEAD` from `total`, the size it read with a
+ranged `GET`, and fetches each `GET` range the console asks from `url`, with the
+same transport as downloads. The link works only while the app runs: closing it
+stops the console's download. Its first requests and any origin error are
+logged as `pkg-proxy:` lines.
+
 ## Archive extraction
 
 ```js

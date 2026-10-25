@@ -145,6 +145,9 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     const listeners4 = /* @__PURE__ */ new Set();
     sources ?? (sources = createSourceResolver({ http }));
     const captures = /* @__PURE__ */ new Map();
+    // The packages this session serves to the console's own download: rest mode would suspend the app
+    // and cut them, so the console stays awake while the app runs with one.
+    const served = /* @__PURE__ */ new Set();
     let jobs = [];
     let active2 = null;
     let ticks = 0;
@@ -180,7 +183,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     }
     const snapshot = () => jobs.map((job2) => ({ ...job2 }));
     const emit2 = () => {
-      const busy = captures.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
+      const busy = captures.size > 0 || served.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
       if (busy !== awake2) {
         awake2 = busy;
         power.keepAwake(busy);
@@ -464,24 +467,25 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         return "unknown";
       }
     };
-    // How each shape is named in app.log, in the order linkShapes puts them.
-    var SHAPES = ["as it came", "with .pkg on the end", "with its query in sorted order"];
-    // The console's installer refuses some links before it has fetched anything (a signed S3 link from
-    // Vikingfile's storage, 2026-10-25) and the code it gives names no cause that can be looked up. So the
-    // same file is offered again in the shapes that could matter to its parser, cheapest first: the link
-    // as it came; the same with ".pkg" on the end, as a fragment the host never sees and no signature
-    // covers; and the same with its query in sorted order, which is what a signature canonicalises to.
-    // The first shape the console takes is the one it installs.
-    var linkShapes = (url, name) => {
-      const shapes = [url];
-      const plain = String(name || "package").replace(/\.[a-z0-9]+$/i, "").replace(/[^A-Za-z0-9._-]+/g, "-");
-      if (!url.includes("#")) shapes.push(`${url}#${plain}.pkg`);
-      const mark = url.indexOf("?");
-      if (mark > 0) {
-        const sorted = `${url.slice(0, mark)}?${url.slice(mark + 1).split("&").sort().join("&")}`;
-        if (sorted !== url) shapes.push(sorted);
-      }
+    // The ways the console is offered the package, in order. First the link as it came, which the
+    // console fetches by itself, also once the app has closed. Then the same file served by the app
+    // from 127.0.0.1: the console asks a HEAD before it fetches, and a pre-signed link (Vikingfile's S3
+    // storage) signs only the GET it was made for, so the HEAD got 403 and the console refused it with
+    // 0x80B22403 whatever shape the link had (".pkg" on the end and a sorted query were tried and
+    // refused alike, 2026-10-25). The first shape the console takes is the one it installs.
+    var linkShapes = (link) => {
+      const shapes = [{ name: "as it came", url: link.url }];
+      if (typeof packages?.proxy === "function" && link.total) shapes.push({ name: "through Overdrive", proxied: true });
       return shapes;
+    };
+    // The app's own link to the package, or null when it cannot serve one (an older engine, no socket).
+    var proxyLink = (job2, link) => {
+      try {
+        return packages.proxy({ url: link.url, total: link.total, file: job2.release.filename || job2.title });
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: the app could not serve it to the console: ${error2.message}`);
+        return null;
+      }
     };
     // What the host answers: the console's refusal names no cause, and this is the response it would have
     // had in front of it. A one-byte range, because a host that serves 85 GB will not answer a plain
@@ -576,15 +580,19 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       console.log(`[download-queue] ${job2.id}: the host serves it as ${String(link.headers?.["content-type"] || "-").slice(0, 60)}, ${String(link.headers?.["content-disposition"] || "-").slice(0, 90)}`);
       // The install goes to the internal drive: a full one is a refusal that looks like any other.
       console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
-      const shapes = linkShapes(link.url, job2.release.filename || job2.title);
-      let task = null, accepted = false, taken = "";
+      const shapes = linkShapes(link);
+      let task = null, accepted = false, taken = null;
       for (let attempt = 0; attempt < shapes.length && !accepted && job2.state !== "pausing"; attempt++) {
-        if (attempt) console.log(`[download-queue] ${job2.id}: offered it again ${SHAPES[attempt]} to the console: ${linkForLog(shapes[attempt])}`);
-        const answer = await handOver(job2, shapes[attempt], link);
+        const shape = shapes[attempt];
+        const url = shape.proxied ? proxyLink(job2, link) : shape.url;
+        if (!url) break;
+        // The app's own link names no secret: it goes to app.log whole.
+        if (attempt) console.log(`[download-queue] ${job2.id}: offered it again ${shape.name} to the console: ${shape.proxied ? url : linkForLog(url)}`);
+        const answer = await handOver(job2, url, link);
         task = answer.task;
         accepted = answer.accepted;
-        if (accepted) taken = SHAPES[attempt];
-        else if (attempt === 0) await describeHost(job2, shapes[0]);
+        if (accepted) taken = shape;
+        else if (attempt === 0) await describeHost(job2, url);
       }
       delete job2.streaming;
       // The console goes on by itself with what it took: the app stops listening, and waits until the
@@ -602,12 +610,17 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         console.log(`[download-queue] ${job2.id}: downloading it here instead`);
         return false;
       }
-      console.log(`[download-queue] ${job2.id}: the console took it ${taken}`);
+      console.log(`[download-queue] ${job2.id}: the console took it ${taken.name}`);
       job2.state = "installed";
       job2.streamed = true;
       job2.written = job2.total || 0;
       job2.bytesPerSecond = 0;
-      job2.message = t("downloads.streamed");
+      // Served by the app, the console's download lasts as long as the app does.
+      if (taken.proxied) {
+        job2.proxied = true;
+        served.add(job2.id);
+      }
+      job2.message = t(taken.proxied ? "downloads.streamedProxy" : "downloads.streamed");
       notifications.show(t("downloads.notice.streamed"), job2.title);
       return true;
     }

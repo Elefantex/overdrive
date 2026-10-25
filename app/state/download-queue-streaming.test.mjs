@@ -15,10 +15,10 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg'} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
-  const requests = [], installs = [], enqueued = [];
+  const requests = [], installs = [], enqueued = [], proxied = [];
   const fs = {
     exists: path => dirs.has(path) || files.has(path),
     stat: path => dirs.has(path) ? {isDirectory: true, device: 'dev', inode: 'root', modified: 0} :
@@ -48,6 +48,13 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
     },
   };
   const packages = {
+    // The engine's own link to the package (ABI v21); `proxy: false` is an engine without it, and
+    // 'fails' one that cannot listen.
+    ...proxy ? {proxy(request) {
+      proxied.push(request);
+      if (proxy === 'fails') throw new Error('packages.proxy: listen on 127.0.0.1: Operation not permitted');
+      return `http://127.0.0.1:41000/0123456789abcdef/${request.file}`;
+    }} : {},
     install(request) {
       installs.push(request);
       const listeners = new Set();
@@ -88,7 +95,7 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
   const release = {id: 'source-1', filename: format === 'binary' ? 'game.binary' : 'game.' + format,
     url: redirect ? 'https://host.example/f/abc' : url, format, provider: 'vikingfile'};
   const id = queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data');
-  return {queue, id, requests, installs, enqueued};
+  return {queue, id, requests, installs, enqueued, proxied};
 }
 
 async function settled(fixture, states = ['installed', 'file-downloaded', 'installer-required', 'failed', 'downloaded']) {
@@ -135,30 +142,63 @@ test('a host that ignores ranges downloads here', async () => {
 test('a link the console refuses downloads here instead, and is not offered again', async () => {
   const fixture = harness({console: 'refused', format: 'pkg'});
   const job = await settled(fixture);
-  assert.equal(fixture.installs.length, 3, 'the link in the two shapes it has, then the downloaded file');
+  assert.equal(fixture.installs.length, 3, "the link, the app's own link to it, then the downloaded file");
   assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
   assert.equal(fixture.enqueued.length, 1);
   assert.equal(job.streamTried, true);
   assert.equal(job.streamed, undefined);
 });
 
-// The refusal names no cause, so the same file is offered again in the shape that could matter to the
-// console's parser: ".pkg" on the end as a fragment, which the host never sees and no signature covers.
-test('a refused link is offered again with .pkg on the end, and taken there', async () => {
-  const fixture = harness({console: url => url.includes('#') ? 'accepted' : 'refused', format: 'pkg'});
+// A pre-signed link answers the console's HEAD 403 (it signs only the GET), and the console refuses it
+// with 0x80B22403 (the user's Vikingfile logs, 2026-10-25). The app's own link answers that HEAD.
+test('a refused link is offered again through the app, and taken there', async () => {
+  const fixture = harness({console: url => url.startsWith('http://127.0.0.1') ? 'accepted' : 'refused', format: 'pkg'});
   const job = await settled(fixture);
   assert.equal(job.state, 'installed', job.error);
   assert.equal(job.streamed, true);
-  assert.deepEqual(fixture.installs.map(item => item.url), [
-    'https://cdn.example/file.pkg',
-    'https://cdn.example/file.pkg#game.pkg',
+  assert.equal(job.proxied, true);
+  assert.equal(job.message, 'downloads.streamedProxy');
+  assert.deepEqual(fixture.installs.map(item => [item.url, item.contentId]), [
+    ['https://cdn.example/file.pkg', PS4_ID],
+    ['http://127.0.0.1:41000/0123456789abcdef/game.pkg', PS4_ID],
   ]);
+  assert.deepEqual(fixture.proxied, [{url: 'https://cdn.example/file.pkg', total: 100e9, file: 'game.pkg'}]);
   assert.equal(fixture.enqueued.length, 0);
 });
 
-// Every shape is tried before the app gives up on the console, and the response the host gives to a
-// plain request is logged while it still may explain the refusal.
-test('a link with a query is offered three ways, with the host\'s own answer beside them', async () => {
+test('a link the console takes as it came is never served by the app', async () => {
+  const fixture = harness();
+  const job = await settled(fixture);
+  assert.equal(job.state, 'installed', job.error);
+  assert.equal(job.proxied, undefined);
+  assert.equal(job.message, 'downloads.streamed');
+  assert.equal(fixture.proxied.length, 0);
+});
+
+test("an engine without the app's own link offers the link once, then downloads here", async () => {
+  const fixture = harness({console: 'refused', format: 'pkg', proxy: false});
+  await settled(fixture);
+  assert.equal(fixture.installs.length, 2, 'the link, then the downloaded file');
+  assert.equal(fixture.installs[1].path, '/data/downloads/files/game.pkg');
+});
+
+test('an app that cannot serve the link says so and downloads here', async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...parts) => lines.push(parts.join(' '));
+  let fixture;
+  try {
+    fixture = harness({console: 'refused', format: 'pkg', proxy: 'fails'});
+    await settled(fixture);
+  } finally {
+    console.log = original;
+  }
+  assert.equal(fixture.installs.length, 2);
+  assert.ok(lines.some(line => line.includes('could not serve it to the console: packages.proxy: listen')), lines.join('\n'));
+});
+
+// The response the host gives is logged while it still may explain the refusal.
+test("a refused link with a query has the host's own answer beside it", async () => {
   const lines = [];
   const original = console.log;
   console.log = (...parts) => lines.push(parts.join(' '));
@@ -169,14 +209,14 @@ test('a link with a query is offered three ways, with the host\'s own answer bes
   } finally {
     console.log = original;
   }
-  assert.deepEqual(fixture.installs.slice(0, 3).map(item => item.url), [
+  assert.deepEqual(fixture.installs.slice(0, 2).map(item => item.url), [
     'https://cdn.example/file.pkg?b=1&a=2',
-    'https://cdn.example/file.pkg?b=1&a=2#game.pkg',
-    'https://cdn.example/file.pkg?a=2&b=1',
+    'http://127.0.0.1:41000/0123456789abcdef/game.pkg',
   ]);
-  assert.equal(fixture.installs[3].path, '/data/downloads/files/game.pkg');
+  assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
   assert.ok(lines.some(line => line.includes('the host answers 206 to a one-byte range')), lines.join('\n'));
   assert.ok(lines.some(line => line.includes('its query names b, a')), lines.join('\n'));
+  assert.ok(lines.some(line => line.includes('offered it again through Overdrive to the console: http://127.0.0.1:41000/')), lines.join('\n'));
 });
 
 // app.log cuts a line at 382 characters: a signed CDN link alone fills one, so the reason and its code

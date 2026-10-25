@@ -536,11 +536,18 @@ export const Archives = Object.freeze({
  * package's `contentId`; it completes once the title is playable. Cancelling stops reporting only.
  * `url` in place of `path` (ABI v20) hands an http(s) link to the console's own download queue, which
  * fetches and installs it in the background; a PS4 package needs its `contentId`.
+ * `proxy({url, total, file})` (ABI v21) returns an `http://127.0.0.1` link serving `url` for that queue:
+ * the HEAD the console asks first is answered by the app, from `total`, and each GET range is fetched
+ * from `url`. It is for a link whose origin refuses that HEAD (a pre-signed S3 or R2 link), and it works
+ * only while the app runs.
  */
 export const Packages = Object.freeze({
   install({path, url, name = '', contentId = ''}) {
     const id = host().packages.install(url ?? path, name, contentId);
     return networkTask(id, 'Packages.install', url ?? path, 'packages');
+  },
+  proxy({url, total, file = ''}) {
+    return host().packages.proxy(url, total, file);
   },
 });
 

@@ -3,6 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 #include "host_api.hpp"
 #include "packages.hpp"
+#include "pkg_proxy.hpp"
 #include <climits>
 #include <cstring>
 
@@ -64,6 +65,17 @@ JSValue install(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   if (!id) return JS_ThrowPlainError(ctx, "packages.install: %s", error.c_str());
   return JS_NewUint32(ctx, id);
 }
+// ABI v21: the same link served from 127.0.0.1, for a console that refuses the origin's own answers.
+JSValue proxy(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  std::string url;
+  double total = 0;
+  if (argc < 2 || !package_link(ctx, argv[0], url) || JS_ToFloat64(ctx, &total, argv[1]) || !(total >= 1) || total > 9e15)
+    return JS_ThrowTypeError(ctx, "packages.proxy: expected an http(s) link and its size in bytes");
+  std::string error;
+  const auto local = pkg_proxy::serve(std::move(url), static_cast<std::uint64_t>(total), string_argument(ctx, argc, argv, 2), error);
+  if (local.empty()) return JS_ThrowPlainError(ctx, "packages.proxy: %s", error.c_str());
+  return JS_NewString(ctx, local.c_str());
+}
 JSValue cancel(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   std::uint32_t id = 0;
   if (!argc || JS_ToUint32(ctx, &id, argv[0])) return JS_ThrowTypeError(ctx, "packages.cancel: expected task id");
@@ -91,6 +103,7 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 JSValue ps5_react_package_api(JSContext* ctx) {
   JSValue api = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, api, "install", JS_NewCFunction(ctx, install, "install", 3));
+  JS_SetPropertyStr(ctx, api, "proxy", JS_NewCFunction(ctx, proxy, "proxy", 3));
   JS_SetPropertyStr(ctx, api, "cancel", JS_NewCFunction(ctx, cancel, "cancel", 1));
   JS_SetPropertyStr(ctx, api, "poll", JS_NewCFunction(ctx, poll, "poll", 0));
   return api;
