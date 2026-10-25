@@ -1,223 +1,434 @@
+// Settings, rebuilt as the PS5's own settings are: every entry a tile that shows its value, and
+// pressing it opens that setting's page — its choices on the left, what the focused choice does on
+// the right. The order is General first, then the Downloads settings, the linked services and the
+// build's own information. Services wear the same brand marks the Downloads page draws.
+//
+// The page's content lives in settings-data.js; this file is layout and what a press does. Back (○)
+// leaves a setting for the tiles, and leaves the tiles for the app.
 
 import '../assets/Inter-Regular.ttf';
+import '../assets/JetBrainsMono-Regular.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
-import { formatPercent2 } from '../i18n/core.js';
+import { formatDate2 } from '../i18n/core.js';
 import { chooseLanguage, languageChoice, systemLocale, useT } from '../i18n/index.js';
-import { LOCALES } from '../i18n/locales.js';
-import { FocusRing } from './FocusRing.jsx';
-import { Icon } from './Icon.jsx';
-import { colors } from './colors.js';
-import { LEVELS, setVibrationLevel, useVibrationLevel } from './haptics.js';
-import { LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
+import en from '../i18n/locales/en.json';
+import { useNavActions } from '../state/nav.jsx';
+import { setService, useServices } from '../state/download-services.js';
+import { setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.js';
 import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
-import { driveShortName, storageRoots } from '../state/downloads.js';
-import { MODES, setPkgMode, usePkgMode } from '../state/pkg-mode.js';
-import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
+import { storageRoots } from '../state/downloads.js';
+import { setPkgMode, usePkgMode } from '../state/pkg-mode.js';
+import { checkForUpdate } from '../state/update.js';
+import { setVibrationLevel, useVibrationLevel } from './haptics.js';
+import { GROUPS, ITEMS, currentOf, optionsOf, selectedIndex, sideOf, valueOf } from './settings-data.js';
+import { Button2 } from './Button.jsx';
+import { FocusRing } from './FocusRing.jsx';
+import { Icon } from './Icon.jsx';
+import { LogoMark } from './Logo.jsx';
+import { PlatformBadge } from './PlatformBadge.jsx';
+import { HINT, useHints } from './Legend.jsx';
+import { colors } from './colors.js';
+import { formatBytes } from '../state/size.js';
+import { URLDialog } from '../downloads/URLDialog.jsx';
+import { PhoneSetup } from '../downloads/PhoneSetup.jsx';
+import { VERSION } from '../version.js';
+import { BUILD } from '../build.js';
+import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
-  var nameOf = (code) => LOCALES.find((locale2) => locale2.code === code).name;
-  function LanguageFace({ name, detail: detail2, checked }) {
+  // The screen is 1920 wide and the tiles sit inside two 96 px margins, each row inset 14 more: two
+  // columns, 18 apart, come to 841 each.
+  var PAGE_PAD = 96;
+  var INSET = 14;
+  var GAP = 18;
+  var TILE_W = (1920 - PAGE_PAD * 2 - INSET * 2 - GAP) / 2;
+  var HOME_HINTS = [HINT.select, HINT.back];
+  var PAGE_HINTS = [HINT.select, HINT.back];
+
+  // The notices the build copies into the app (ps5-react's tools/build_ps5.py). Listing a mounted
+  // image's folder can come back empty on the console, so these stand in and are checked one by one.
+  var NOTICES = [
+    "ArtCNN-LICENSE", "Anime4K-LICENSE", "QuickJS-LICENSE", "SheenBidi-LICENSE", "embedded-react-LICENSE",
+    "embedded-react-engine-LICENSE", "harfbuzz-COPYING", "Inter-LICENSE", "Lapy-MIT.txt", "Noto-fonts-LICENSE.txt",
+    "SOURCES.md", "cacert-MPL-2.0.txt", "filesystem-helper-client-LICENSE", "material-sounds-NOTICE.txt",
+    "networking-compat-LICENSE", "ps5-homebrew-ui-LICENSE", "ps5-opengl-LICENSE", "ps5-opengl-NOTICES.md",
+    "ps5-react-LICENSE", "ps5-react-LICENSE-ATTRIBUTION", "ps5-react-NOTICE", "stb_image-LICENSE",
+    "unRAR-license.txt", "ffmpeg-LICENSE.md", "ffmpeg-COPYING.LGPLv3", "video-decoder-NOTICE.txt", "audio-passthrough-NOTICE.txt"
+  ];
+  var TITLES = /* @__PURE__ */ new Map();
+
+  function noticeDir() {
+    return `${FileSystem.appDir}/notices`;
+  }
+
+  // What the Licenses page lists: the notices folder when it can be read, the build's own names
+  // checked one by one when it cannot.
+  function noticeNames() {
+    try {
+      const listed = FileSystem.readDir(noticeDir()).filter((entry) => entry.isFile).map((entry) => entry.name);
+      if (listed.length) return listed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+    } catch (error) {
+      console.log(`[settings] notices not listed: ${error.message}`);
+    }
+    return NOTICES.filter((name) => {
+      try {
+        return FileSystem.exists(`${noticeDir()}/${name}`);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  // A language's own word for "Settings", for the sample on its page: read once per language.
+  function titleIn(code) {
+    if (TITLES.has(code)) return TITLES.get(code);
+    let text = en["settings.title"];
+    try {
+      text = JSON.parse(FileSystem.readFile(`${FileSystem.appDir}/i18n/locales/${code}.json`))["settings.title"] || text;
+    } catch (error) {
+      console.log(`[settings] ${code} not read: ${error.message}`);
+    }
+    TITLES.set(code, text);
+    return text;
+  }
+
+  // Every setting's value, from the modules that save it to settings.json. The drives are measured
+  // once, as the page opens, rather than on every focus move.
+  function useSettingsValues() {
+    const services = useServices();
+    const limit = useSpeedLimit();
+    const root = useDownloadRoot();
+    const mode = usePkgMode();
+    const cleanup = useDeletePackages();
+    const vibration = useVibrationLevel();
+    const [drives] = useState(() => {
+      let roots = [];
+      try {
+        roots = storageRoots();
+      } catch (error) {
+        console.log(`[settings] drives not listed: ${error.message}`);
+      }
+      return roots.map((value) => {
+        try {
+          const usage = FileSystem.diskUsage(value);
+          return { root: value, free: usage.free, total: usage.total };
+        } catch (error) {
+          console.log(`[settings] ${value}: ${error.message}`);
+          return { root: value, free: 0, total: 0 };
+        }
+      });
+    });
+    return { services, limit, root, mode, cleanup, vibration, choice: languageChoice(), drives };
+  }
+
+  // A tile: its mark, its name, the value it has now, and the chevron into its page.
+  function Tile({ id, item, value, onPress }) {
+    const t2 = useT();
     const focused = useIsFocused();
-    return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 0 }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: checked ? "#000000" : "#f2f2f3" }, children: name }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: [{ fontFamily: "Inter-Regular", fontSize: 20, lineHeight: 26 }, { color: checked ? "#34343a" : focused ? colors.fg : colors.muted }], children: detail2 })
+    return /* @__PURE__ */ (0, jsx)(View, {
+      focusKey: `settings:tile:${id}`,
+      onPress,
+      style: (state) => [{ position: "relative", width: TILE_W, height: 128, flexDirection: "row", alignItems: "center", gap: 26, borderRadius: 20, paddingLeft: 26, paddingRight: 34, backgroundColor: colors.surface }, state.focused ? { backgroundColor: colors.surface2 } : null],
+      children: /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
+        /* @__PURE__ */ (0, jsx)(FocusRing, { round: "lg" }),
+        /* @__PURE__ */ (0, jsx)(View, { style: { width: 76, height: 76, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: focused ? colors.surface3 : colors.surface2 }, children: item.brand
+          ? /* @__PURE__ */ (0, jsx)(Icon, { name: item.brand, size: 44, color: colors.fg })
+          : /* @__PURE__ */ (0, jsx)(Icon, { name: item.icon, size: 36, color: colors.fg }) }),
+        /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 6 }, children: [
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 27, fontWeight: 600, color: colors.fg, letterSpacing: -0.3, numberOfLines: 1, ellipsizeMode: "tail" }, children: t2(item.title) }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, numberOfLines: 1, ellipsizeMode: "tail" }, children: value })
+        ] }),
+        /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", size: 26, color: focused ? colors.fg : colors.muted })
+      ] })
+    });
+  }
+
+  function Section({ group, ctx, t2, onOpen }) {
+    const items = group.items.filter((id) => id !== "disk" || ctx.values.drives.length > 1);
+    if (!items.length) return null;
+    // Two tiles a row, as the grid draws them: built by hand rather than wrapped, so a rounding of
+    // the row's width can never push the second column down to a row of its own.
+    const rows = [];
+    for (let at = 0; at < items.length; at += 2) rows.push(items.slice(at, at + 2));
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { marginBottom: 26 }, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { marginLeft: 4, marginRight: 4, marginBottom: 16, fontFamily: "Inter-Regular", fontSize: 19, fontWeight: 600, letterSpacing: 2.4, color: colors.subtle }, children: t2(group.title) }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { gap: GAP }, children: rows.map((pair) => /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: GAP }, children: pair.map((id) => /* @__PURE__ */ (0, jsx)(Tile, {
+        id, item: ITEMS[id], value: valueOf(id, ctx, t2), onPress: () => onOpen(id)
+      }, id)) }, pair.join(":"))) })
+    ] });
+  }
+
+  function Home({ ctx, t2, onOpen }) {
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, paddingTop: 34, paddingHorizontal: PAGE_PAD }, children: [
+      /* @__PURE__ */ (0, jsx)(View, { style: { height: 60, justifyContent: "center" }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 44, fontWeight: 600, color: colors.fg, letterSpacing: -1.2 }, children: t2("settings.title") }) }),
+      /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1, marginTop: 18 }, children: /* @__PURE__ */ (0, jsx)(View, { style: { paddingTop: 14, paddingHorizontal: INSET, paddingBottom: 90 }, children: GROUPS.map((group) => /* @__PURE__ */ (0, jsx)(Section, { group, ctx, t2, onOpen }, group.key)) }) })
+    ] });
+  }
+
+  // A row of a setting's page: a radio that fills when it is the choice, or the square an action
+  // carries its icon in, then the name, the line under it, and what the row holds now.
+  function Option({ id, index, row, t2, selected, onFocus, onPress }) {
+    const focused = useIsFocused();
+    return /* @__PURE__ */ (0, jsxs)(View, {
+      focusKey: `settings:option:${id}:${index}`,
+      onPress,
+      onFocus,
+      style: [{ position: "relative", minHeight: 88, flexDirection: "row", alignItems: "center", gap: 22, borderRadius: 18, paddingVertical: 18, paddingHorizontal: 28, backgroundColor: focused ? colors.surface2 : colors.surface }],
+      children: [
+        /* @__PURE__ */ (0, jsx)(FocusRing, { round: "lg" }),
+        row.action
+          ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: row.action, size: 22, color: colors.fg }) })
+          : /* @__PURE__ */ (0, jsx)(View, { style: { width: 34, height: 34, borderRadius: 17, borderWidth: 3, borderColor: selected ? colors.fg : colors.subtle, alignItems: "center", justifyContent: "center", backgroundColor: selected ? colors.fg : "transparent" }, children: selected ? /* @__PURE__ */ (0, jsx)(Icon, { name: "check", size: 20, color: colors.accentFg }) : null }),
+        /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 4 }, children: [
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 27, fontWeight: 600, color: colors.fg }, children: row.label }),
+          row.detail ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: colors.muted, lineHeight: 28 }, children: row.detail }) : null
+        ] }),
+        row.tag ? /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: 999, backgroundColor: colors.ok, paddingVertical: 5, paddingHorizontal: 14 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 17, fontWeight: 600, color: colors.accentFg }, children: row.tag }) }) : null,
+        row.mark ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 92, height: 64, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: row.mark === "console"
+          ? /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 1.5 })
+          : row.mark === "overdrive" ? /* @__PURE__ */ (0, jsx)(LogoMark, { size: 36 }) : /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
+            /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 1.05 }),
+            /* @__PURE__ */ (0, jsx)(LogoMark, { size: 24 })
+          ] }) }) : null,
+        row.valueText ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: row.valueText === t2("add.notSet") ? colors.subtle : colors.muted, numberOfLines: 1, ellipsizeMode: "head" }, children: row.valueText }) : null
+      ]
+    });
+  }
+
+  // The vibration level, drawn: four bars, as many lit as the level holds.
+  function Preview({ level }) {
+    const lit = Math.round(level / 25);
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { alignItems: "center", gap: 20, paddingVertical: 8 }, children: [
+      /* @__PURE__ */ (0, jsx)(View, { style: { width: 200, height: 200, borderRadius: 56, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: "controller", size: 96, color: colors.fg }) }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 10 }, children: [0, 1, 2, 3].map((step) => /* @__PURE__ */ (0, jsx)(View, { style: { width: 44, height: 6, borderRadius: 3, backgroundColor: step < lit ? colors.fg : colors.surface3 } }, String(step))) })
+    ] });
+  }
+
+  // The panel on the right of a page: an eyebrow, the marks or the sample, the big line, the rows,
+  // the drives, and the note that says what the choice does. Its width is what the row leaves after
+  // the 980 left column and the 72 between them, so its lines know where to wrap.
+  var SIDE_W = 1920 - PAGE_PAD * 2 - 980 - 72;
+  function Side({ data, t2 }) {
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { width: SIDE_W, alignSelf: "flex-start", borderRadius: 26, backgroundColor: colors.surface, paddingVertical: 44, paddingHorizontal: 48, gap: 26 }, children: [
+      data.eyebrow ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 18, fontWeight: 600, letterSpacing: 2.4, color: colors.subtle }, children: data.eyebrow }) : null,
+      data.sample ? /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 60, fontWeight: 600, color: colors.fg, letterSpacing: -1.4, writingDirection: data.rtl ? "rtl" : "ltr", textAlign: data.rtl ? "right" : "left" }, children: data.sample.title }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 26, color: colors.muted, writingDirection: data.rtl ? "rtl" : "ltr", textAlign: data.rtl ? "right" : "left" }, children: data.sample.name })
+      ] }) : null,
+      data.preview !== void 0 ? /* @__PURE__ */ (0, jsx)(Preview, { level: data.preview }) : null,
+      data.marks ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 22 }, children: [
+        data.marks === "console" ? /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 2 }) : null,
+        data.marks === "overdrive" ? /* @__PURE__ */ (0, jsx)(LogoMark, { size: 56 }) : null,
+        data.marks === "ask" ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 14 }, children: [
+          /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 1.4 }),
+          /* @__PURE__ */ (0, jsx)(LogoMark, { size: 34 })
+        ] }) : null,
+        data.markLabel ? /* @__PURE__ */ (0, jsx)(Text, { style: { flex: 1, fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: data.markLabel }) : null
+      ] }) : null,
+      data.big ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 40, fontWeight: 600, color: colors.fg, letterSpacing: -0.8 }, children: data.big }) : null,
+      data.rows && data.rows.length ? /* @__PURE__ */ (0, jsx)(View, { style: { gap: 14 }, children: data.rows.map((row) => /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 16, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, backgroundColor: row.on ? colors.fg : colors.surface2 }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 22, color: row.on ? colors.accentFg : colors.muted }, children: row.label }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 22, fontWeight: 600, color: row.on ? colors.accentFg : colors.fg }, children: row.value })
+      ] }, row.label)) }) : null,
+      data.drives && data.drives.length ? /* @__PURE__ */ (0, jsx)(View, { style: { gap: 14 }, children: data.drives.map((drive) => /* @__PURE__ */ (0, jsxs)(View, { style: [{ gap: 10, borderRadius: 16, paddingVertical: 18, paddingHorizontal: 20, backgroundColor: colors.surface2 }, drive.on ? { borderWidth: 3, borderColor: colors.fg } : null], children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 22, fontWeight: 600, color: colors.fg }, children: drive.name }),
+        drive.total ? /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
+          /* @__PURE__ */ (0, jsx)(View, { style: { height: 12, borderRadius: 6, backgroundColor: colors.surface3 }, children: /* @__PURE__ */ (0, jsx)(View, { style: { width: Math.max(2, Math.round((drive.total - drive.free) / drive.total * 100)) + "%", height: 12, borderRadius: 6, backgroundColor: colors.fg } }) }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 19, color: colors.muted }, children: t2("files.free", { free: formatBytes(drive.free), total: formatBytes(drive.total) }) })
+        ] }) : null
+      ] }, drive.name)) }) : null,
+      data.small ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 32 }, children: data.small }) : null
+    ] });
+  }
+
+  function Detail({ id, ctx, t2, onPick }) {
+    const [focused, setFocused] = useState(() => selectedIndex(id, ctx, t2));
+    const rows = optionsOf(id, ctx, t2);
+    const row = rows[Math.min(focused, rows.length - 1)];
+    const current = currentOf(id, ctx.values);
+    const item = ITEMS[id];
+    const group = GROUPS.find((entry) => entry.items.includes(id));
+    const crumb = { fontFamily: "Inter-Regular", fontSize: 22, fontWeight: 500, color: colors.subtle };
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, paddingTop: 34, paddingHorizontal: PAGE_PAD }, children: [
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 10, height: 60 }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: crumb, children: t2("settings.title") }),
+        /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", size: 20, color: colors.subtle }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: crumb, children: t2(group.title) }),
+        /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", size: 20, color: colors.subtle }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: [crumb, { color: colors.fg }], children: t2(item.title) })
+      ] }),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, flexDirection: "row", gap: 72, marginTop: 24 }, children: [
+        /* @__PURE__ */ (0, jsxs)(View, { style: { width: 980 }, children: [
+          item.brand
+            // A service's page opens with its own mark beside its name, as its tile draws it.
+            ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 24, height: 76 }, children: [
+              /* @__PURE__ */ (0, jsx)(View, { style: { width: 76, height: 76, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: item.brand, size: 44, color: colors.fg }) }),
+              /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 46, fontWeight: 600, color: colors.fg, letterSpacing: -1.2 }, children: t2(item.title) })
+            ] })
+            : /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 46, fontWeight: 600, color: colors.fg, letterSpacing: -1.2, lineHeight: 58 }, children: t2(item.title) }),
+          /* @__PURE__ */ (0, jsx)(Text, { style: { width: 800, marginTop: 4, marginBottom: 18, fontFamily: "Inter-Regular", fontSize: 24, color: colors.muted, lineHeight: 35 }, children: t2(item.lead) }),
+          /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1, marginBottom: 24 }, children: /* @__PURE__ */ (0, jsx)(View, { style: { gap: 12, padding: 10, paddingBottom: 90 }, children: rows.length
+            ? rows.map((entry, index) => /* @__PURE__ */ (0, jsx)(Option, {
+              id, index, row: entry, t2,
+              selected: entry.value !== void 0 && entry.value === current,
+              onFocus: () => setFocused(index),
+              onPress: () => onPick(id, entry, index)
+            }, entry.key))
+            : /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.licensesEmpty") }) }) }),
+        ] }),
+        /* @__PURE__ */ (0, jsx)(Side, { data: sideOf(id, ctx, row, t2), t2 })
       ] })
     ] });
   }
-  function Row4({ code, name, detail: detail2, checked, onPress }) {
-    return /* @__PURE__ */ (0, jsx)(View, { focusKey: `language:${code}`, onPress, style: (_state) => [{ position: "relative", width: 610, flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 12, minHeight: 66, backgroundColor: checked ? "#f2f2f3" : "transparent", paddingHorizontal: 16, paddingVertical: 10 }, _state.focused && !checked ? { backgroundColor: "#212125" } : null], children: /* @__PURE__ */ (0, jsx)(LanguageFace, { name, detail: detail2, checked }) });
-  }
-  // One segment of the speed limit (issue #15): every value in view, the chosen one filled. The D-pad
-  // moves along the row and Cross picks, so no value has to be typed.
-  function SpeedSegment({ limit, chosen }) {
-    const t2 = useT();
-    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:speed:${limit}`, autoFocus: chosen, nextFocusUp: 'nav:current', onPress: () => setSpeedLimit(limit), style: { position: "relative", flex: limit ? 1 : 2, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: limit ? String(limit) : t2("settings.speedUnlimited") })
-    ] });
-  }
-  function SpeedLimit() {
-    const t2 = useT();
-    const limit = useSpeedLimit();
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.speedLimit") })
-        ] }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.speedLimitDetail") })
-      ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: LIMITS.map((value) => /* @__PURE__ */ (0, jsx)(SpeedSegment, { limit: value, chosen: value === limit }, value)) })
-    ] });
-  }
-  // Whether a PKG is deleted once installed, laid out like the speed limit: both choices in view.
-  function PackagesSegment({ on, chosen }) {
-    const t2 = useT();
-    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:packages:${on ? "on" : "off"}`, onPress: () => setDeletePackages(on), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: t2(on ? "settings.on" : "settings.off") })
-    ] });
-  }
-  function DeletePackages() {
-    const t2 = useT();
-    const on = useDeletePackages();
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.deletePackages") })
-        ] }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.deletePackagesDetail") })
-      ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [true, false].map((value) => /* @__PURE__ */ (0, jsx)(PackagesSegment, { on: value, chosen: value === on }, String(value))) })
-    ] });
-  }
-  // The drive downloads go to (issue #103), laid out like the speed limit: every drive in view,
-  // plus Automatic for the app's own pick. It shows only when there is more than one drive.
-  function DiskSegment({ root, label, chosen }) {
-    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:disk:${root ?? "auto"}`, onPress: () => setDownloadRoot(root), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: label })
-    ] });
-  }
-  function DiskForDownloads() {
-    const t2 = useT();
-    const root2 = useDownloadRoot();
-    const [roots] = (0, useState)(() => {
-      try {
-        return storageRoots();
-      } catch {
-        return ["/data"];
-      }
+
+  function UnlinkDialog({ service, t2, onConfirm, onCancel }) {
+    return /* @__PURE__ */ (0, jsx)(FocusScope, {
+      trap: true, autoFocus: true,
+      onBack: () => { onCancel(); return true; },
+      onAction: () => true,
+      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: 900, gap: 24, padding: 48, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 34, fontWeight: 600, color: colors.fg, lineHeight: 46 }, children: t2("settings.unlinkTitle", { service: t2(`add.${service}Name`) }) }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.unlinkBody") }),
+        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12, paddingTop: 6 }, children: [
+          /* @__PURE__ */ (0, jsx)(Button2, { label: t2("settings.unlink"), focusKey: "settings:unlink:yes", autoFocus: true, onPress: onConfirm }),
+          /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.cancel"), variant: "outline", onPress: onCancel })
+        ] })
+      ] }) })
     });
-    if (roots.length < 2) return null;
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.disk") })
-        ] }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.diskDetail") })
-      ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [null, ...roots].map((value) => /* @__PURE__ */ (0, jsx)(DiskSegment, { root: value, chosen: value === root2, label: value ? driveShortName(value) : t2("settings.diskAuto") }, value ?? "auto")) })
-    ] });
   }
-  // Where a PKG downloads (pkg-mode.js): asked each time, in the background on the PS5, or in Overdrive.
-  function PkgModeSegment({ mode, chosen }) {
-    const t2 = useT();
-    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:pkg:${mode}`, onPress: () => setPkgMode(mode), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: t2(`settings.pkgMode.${mode}`) })
-    ] });
+
+  // A notice reads over the page, in the app's monospace face, scrolling on the D-pad.
+  function NoticeView({ notice, t2, onClose }) {
+    return /* @__PURE__ */ (0, jsx)(FocusScope, {
+      trap: true, autoFocus: true,
+      onBack: () => { onClose(); return true; },
+      onAction: () => true,
+      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: 1560, height: 800, gap: 22, padding: 44, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 30, fontWeight: 600, color: colors.fg }, children: notice.name }),
+        /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "JetBrainsMono-Regular", fontSize: 19, color: colors.muted, lineHeight: 28 }, children: notice.text }) }),
+        /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row" }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.close"), autoFocus: true, onPress: onClose }) })
+      ] }) })
+    });
   }
-  function PkgMode() {
-    const t2 = useT();
-    const mode = usePkgMode();
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.pkgMode") }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.pkgModeDetail") })
-      ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: MODES.map((value) => /* @__PURE__ */ (0, jsx)(PkgModeSegment, { mode: value, chosen: value === mode }, value)) })
-    ] });
-  }
-  // The vibration level (issue #32), laid out like the speed limit: every step in view, Cross picks.
-  var levelName = (t2, level) => level ? formatPercent2(level) : t2("settings.vibrationOff");
-  function VibrationSegment({ level, chosen }) {
-    const t2 = useT();
-    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:vibration:${level}`, onPress: () => setVibrationLevel(level), style: { position: "relative", flex: level ? 1 : 2, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: levelName(t2, level) })
-    ] });
-  }
-  function VibrationLevel() {
-    const t2 = useT();
-    const level = useVibrationLevel();
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
-        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
-          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.vibration") })
-        ] }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.vibrationDetail") })
-      ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: LEVELS.map((value) => /* @__PURE__ */ (0, jsx)(VibrationSegment, { level: value, chosen: value === level }, value)) })
-    ] });
-  }
-  function SectionLabel({ icon, title, detail: detail2 }) {
-    const text = /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 3 }, children: [
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 19, fontWeight: 600, color: colors.muted, letterSpacing: 1.5 }, children: title }),
-      detail2 ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 19, color: colors.muted, lineHeight: 27 }, children: detail2 }) : null
-    ] });
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }, children: [
-      icon ? /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 26, color: colors.muted }) : null,
-      text
-    ] });
-  }
+
   function SettingsScreen({ onBack }) {
     const t2 = useT();
-    const choice2 = languageChoice();
-    const pick2 = (code) => chooseLanguage(code);
-    return /* @__PURE__ */ (0, jsx)(FocusScope, {
-      autoFocus: true,
-      onBack: () => { onBack(); return true; },
-      children: /* @__PURE__ */ (0, jsxs)(View, {
-        style: { flex: 1 },
-        children: [
-          /* @__PURE__ */ (0, jsx)(Text, {
-            style: { paddingHorizontal: 48, paddingTop: 36, paddingBottom: 28,
-              fontFamily: "Inter-Regular", fontSize: 36, fontWeight: 700,
-              color: colors.fg, lineHeight: 50, letterSpacing: -0.75 },
-            children: t2("settings.title")
-          }),
-          /* Only language options scroll; the left column stays in place. */
-          /* @__PURE__ */ (0, jsxs)(View, {
-            style: { flex: 1, flexDirection: "row", paddingHorizontal: 48, gap: 104 },
-            children: [
-                /* Download and controller settings in a narrower left column. */
-                /* @__PURE__ */ (0, jsxs)(View, {
-                  style: { width: 830, gap: 6 },
-                  children: [
-                    /* @__PURE__ */ (0, jsx)(SectionLabel, { icon: "download", title: t2("settings.downloads") }),
-                    /* @__PURE__ */ (0, jsx)(SpeedLimit, {}),
-                    /* @__PURE__ */ (0, jsx)(DiskForDownloads, {}),
-                    /* @__PURE__ */ (0, jsx)(DeletePackages, {}),
-                    /* @__PURE__ */ (0, jsx)(PkgMode, {}),
-                    /* @__PURE__ */ (0, jsx)(SectionLabel, { title: t2("settings.controller") }),
-                    /* @__PURE__ */ (0, jsx)(VibrationLevel, {})
-                  ]
-                }),
-                /* Independent scrolling language column, shifted 56px right. */
-                /* @__PURE__ */ (0, jsxs)(View, {
-                  style: { width: 650, flex: 1, position: 'relative' },
-                  children: [
-                    /* Keep the title visible while only the language options scroll. */
-                    /* @__PURE__ */ (0, jsx)(SectionLabel, { icon: "languages", title: t2("language.title"), detail: t2("language.subtitle") }),
-                    /* @__PURE__ */ (0, jsx)(ScrollView, {
-                      style: { flex: 1, marginBottom: 90 },
-                      children: /* @__PURE__ */ (0, jsxs)(View, {
-                        style: { paddingTop: 12, paddingBottom: 80, gap: 8 },
-                        children: [
-                          /* @__PURE__ */ (0, jsx)(Row4, { code: "system", name: t2("language.system"), detail: nameOf(systemLocale()), checked: choice2 === null, onPress: () => pick2(null) }),
-                    LOCALES.map(
-                      ({ code, name }) => /* @__PURE__ */ (0, jsx)(Row4, { code, name, detail: t2(`language.name.${code}`), checked: choice2 === code, onPress: () => pick2(code) }, code)
-                    )
-                        ]
-                      })
-                    }),
-                    /* Stop the list early and softly fade languages before the screen footer. */
-                    /* @__PURE__ */ (0, jsx)(View, {
-                      pointerEvents: 'none',
-                      style: { position: 'absolute', left: 0, right: 0, bottom: 90,
-                        height: 62, backgroundGradient: { type: 'linear', to: 'top',
-                          stops: [{ color: '#000000', offset: 0 }, { color: '#00000000', offset: 1 }] } }
-                    })
-                  ]
-                })
-              ]
-          })
-        ]
-      })
-    });
+    const values = useSettingsValues();
+    const { focusLater } = useNavActions();
+    const [page, setPage] = useState(null);
+    const [dialog, setDialog] = useState(null);
+    const [notice, setNotice] = useState(null);
+    const [check, setCheck] = useState({ phase: "idle" });
+    const [names] = useState(noticeNames);
+    useHints(page ? PAGE_HINTS : HOME_HINTS);
+    let built = "";
+    if (BUILD.built) {
+      try {
+        built = formatDate2(BUILD.built);
+      } catch {
+        built = BUILD.built;
+      }
+    }
+    const ctx = {
+      values, drives: values.drives, system: systemLocale(), version: VERSION, commit: BUILD.commit,
+      built, check, notices: names, titleIn
+    };
+    const optionKey = (id, index) => `settings:option:${id}:${index}`;
+    const open = (id) => {
+      setPage(id);
+      focusLater(optionKey(id, selectedIndex(id, ctx, t2)));
+    };
+    const closePage = () => {
+      setPage(null);
+      focusLater(`settings:tile:${page}`);
+    };
+    const closeDialog = (index) => {
+      setDialog(null);
+      focusLater(optionKey(page, index));
+    };
+    const fieldIndex = (field) => optionsOf(page, ctx, t2).findIndex((entry) => entry.field === field);
+    const runCheck = () => {
+      setCheck({ phase: "checking" });
+      void (async () => {
+        try {
+          const found = await checkForUpdate();
+          setCheck(found ? { phase: "newer", version: found.version } : { phase: "current" });
+        } catch (error) {
+          console.log(`[settings] update check: ${error.message}`);
+          setCheck({ phase: "failed" });
+        }
+      })();
+    };
+    const pick = (id, row, index) => {
+      if (row.value !== void 0) {
+        if (id === "vibration") setVibrationLevel(row.value);
+        else if (id === "language") chooseLanguage(row.value === "system" ? null : row.value);
+        else if (id === "speed") setSpeedLimit(row.value);
+        else if (id === "disk") setDownloadRoot(row.value === "auto" ? null : row.value);
+        else if (id === "pkg") setPkgMode(row.value);
+        else if (id === "cleanup") setDeletePackages(row.value);
+        return;
+      }
+      if (row.notice) {
+        let text = "";
+        try {
+          text = FileSystem.readFile(`${noticeDir()}/${row.notice}`);
+        } catch (error) {
+          text = `${t2("settings.licensesEmpty")}\n\n${error.message}`;
+        }
+        setNotice({ name: row.notice, text, index });
+        return;
+      }
+      if (row.action === "restart") return runCheck();
+      if (row.phone) return setDialog({ type: "phone", service: row.phone, index });
+      if (row.unlink) return setDialog({ type: "unlink", service: row.unlink, index });
+      if (row.field) return setDialog({ type: "field", field: row.field, service: page, value: row.initial || "", index });
+    };
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1 }, children: [
+      /* @__PURE__ */ (0, jsx)(FocusScope, {
+        autoFocus: true,
+        onBack: () => {
+          if (page) { closePage(); return true; }
+          onBack();
+          return true;
+        },
+        children: page
+          ? /* @__PURE__ */ (0, jsx)(Detail, { id: page, ctx, t2, onPick: pick })
+          : /* @__PURE__ */ (0, jsx)(Home, { ctx, t2, onOpen: open })
+      }),
+      dialog && dialog.type === "phone" ? /* @__PURE__ */ (0, jsx)(PhoneSetup, {
+        service: dialog.service,
+        onField: (field) => setDialog({ type: "field", field, service: dialog.service, value: values.services[field] || "", index: Math.max(0, fieldIndex(field)) }),
+        onDone: () => closeDialog(dialog.index),
+        onCancel: () => closeDialog(dialog.index)
+      }) : null,
+      dialog && dialog.type === "field" ? /* @__PURE__ */ (0, jsx)(URLDialog, {
+        title: t2(`add.field.${dialog.field}`),
+        detail: t2(`add.fieldBody.${dialog.field}`),
+        initial: dialog.value,
+        submit: (value) => setService(dialog.field, value),
+        onClose: () => closeDialog(dialog.index)
+      }) : null,
+      dialog && dialog.type === "unlink" ? /* @__PURE__ */ (0, jsx)(UnlinkDialog, {
+        service: dialog.service,
+        t2,
+        onConfirm: () => {
+          setService(dialog.service, "");
+          // The unlink row was the last one and it is gone with the key.
+          closeDialog(Math.max(0, dialog.index - 1));
+        },
+        onCancel: () => closeDialog(dialog.index)
+      }) : null,
+      notice ? /* @__PURE__ */ (0, jsx)(NoticeView, {
+        notice,
+        t2,
+        onClose: () => {
+          setNotice(null);
+          focusLater(optionKey(page, notice.index));
+        }
+      }) : null
+    ] });
   }
 
 export { SettingsScreen };

@@ -75,6 +75,13 @@ import { Archives, Downloads, FileSystem, Http, Platform } from '@ps5-react/core
     }
     return (await instance2()).install(update, onProgress);
   }
+  // The Settings page's own "check for updates": the same feed and the same rules the launch
+  // dialog follows, asked when the player asks. null means this build is the latest.
+  async function checkForUpdate() {
+    const current = await instance2();
+    void current.cleanup();
+    return await current.check();
+  }
   function useFolderInstall() {
     const [folder, setFolder] = (0, useState)(false);
     (0, useEffect)(() => {
@@ -83,4 +90,4 @@ import { Archives, Downloads, FileSystem, Http, Platform } from '@ps5-react/core
     return folder;
   }
 
-export { installUpdate, useAvailableUpdate, useFolderInstall };
+export { checkForUpdate, installUpdate, useAvailableUpdate, useFolderInstall };
