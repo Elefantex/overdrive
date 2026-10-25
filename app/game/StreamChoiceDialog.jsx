@@ -13,19 +13,28 @@ import { formatBytes } from '../state/size.js';
 import { Cover } from '../ui/Cover.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { Icon } from '../ui/Icon.jsx';
+import { LogoMark } from '../ui/Logo.jsx';
+import { PlatformBadge } from '../ui/PlatformBadge.jsx';
 import { colors } from '../ui/colors.js';
 import { FocusScope, Text, View } from '@ps5-react/core';
 
   var TEXT = { fontFamily: "Inter-Regular", color: colors.fg };
 
-  function Option({ focusKey, icon, title, body, badge, onPress }) {
+  // Each choice carries its own mark: the PS5 badge the game cards wear, for the console's Downloads,
+  // and Overdrive's dial for Overdrive. The badge is wide and low, the dial square, so the badge is a
+  // little wider (54 units, 81 px) than the dial (44 units, 66 px) to weigh about the same in its tile.
+  var MARKS = {
+    console: () => /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 54 / 44 }),
+    here: () => /* @__PURE__ */ (0, jsx)(LogoMark, { size: 44, color: colors.fg })
+  };
+  function Option({ focusKey, mark, title, body, badge, onPress }) {
     return /* @__PURE__ */ (0, jsxs)(View, {
       focusKey, onPress,
       style: (state) => [{ position: "relative", flex: 1, gap: 16, borderRadius: 20, padding: 32, backgroundColor: colors.surface2 }, state.focused ? { backgroundColor: colors.surface3 } : null],
       children: [
         /* @__PURE__ */ (0, jsx)(FocusRing, {}),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
-          /* @__PURE__ */ (0, jsx)(View, { style: { width: 72, height: 72, alignItems: "center", justifyContent: "center", borderRadius: 18, backgroundColor: colors.surface3 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 38, color: colors.fg }) }),
+          /* @__PURE__ */ (0, jsx)(View, { style: { width: 96, height: 96, alignItems: "center", justifyContent: "center", borderRadius: 22, backgroundColor: colors.surface3 }, children: MARKS[mark]() }),
           badge ? /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: 999, paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.ok }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { ...TEXT, fontSize: 18, fontWeight: 600, color: colors.accentFg }, children: badge }) }) : null
         ] }),
         /* @__PURE__ */ (0, jsx)(Text, { style: { ...TEXT, fontSize: 30, fontWeight: 600, lineHeight: 38 }, children: title }),
@@ -64,8 +73,8 @@ import { FocusScope, Text, View } from '@ps5-react/core';
           ] })
         ] }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 24 }, children: [
-          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:console", icon: "controller", title: t2("stream.console.title"), body: t2("stream.console.body"), badge: t2("stream.recommended"), onPress: () => pick("console") }),
-          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:here", icon: "download", title: t2("stream.here.title"), body: t2("stream.here.body"), onPress: () => pick("here") })
+          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:console", mark: "console", title: t2("stream.console.title"), body: t2("stream.console.body"), badge: t2("stream.recommended"), onPress: () => pick("console") }),
+          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:here", mark: "here", title: t2("stream.here.title"), body: t2("stream.here.body"), onPress: () => pick("here") })
         ] }),
         /* @__PURE__ */ (0, jsxs)(View, {
           focusKey: "stream:remember",
