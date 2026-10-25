@@ -417,7 +417,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
           console.log(`[download-queue] ${job2.id}: not streamed, its PS4 header names no content ID`);
           return null;
         }
-        return { url, contentId, kind: ps4 ? "PS4" : "PS5", total: packageSize(response.headers) };
+        return { url, contentId, kind: ps4 ? "PS4" : "PS5", total: packageSize(response.headers), headers: response.headers };
       }
       return null;
     }
@@ -428,10 +428,11 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     var consoleFailure = (message) => {
       const text = String(message || "");
       const code = text.match(/\(0x([0-9a-zA-Z]+)\)/)?.[1];
-      // Read around the link rather than matching through it: the reason sits between the call's colon
-      // and the code, and the fitted regex left the whole link in the line on the console (2026-10-25).
-      const opened = text.indexOf(": "), closed = text.lastIndexOf("(0x");
-      const reason = (opened > 0 && closed > opened ? text.slice(opened + 2, closed) : "").trim();
+      // The frame says it as "Packages.install: <url>: <reason> (0x<code>)": the last piece before the
+      // code is the reason, and reading it from there keeps a signed CDN link out of app.log's 382
+      // characters, which are not enough for both.
+      const parts = text.replace(/\(0x[0-9a-zA-Z]+\)\s*$/, "").split(": ");
+      const reason = parts[parts.length - 1].replace(/https?:\/\/\S+/g, "").trim();
       return `code=0x${code || "none"}${reason ? ` ${reason}` : ""}`;
     };
     // What the console's own install has to work with: it installs to the internal drive, not to this
@@ -462,20 +463,26 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       }
       return shapes;
     };
-    // What the host answers a request with no range and no conditions: the console's refusal names no
-    // cause, and this is the response it would have had in front of it.
+    // What the host answers: the console's refusal names no cause, and this is the response it would have
+    // had in front of it. A one-byte range, because a host that serves 85 GB will not answer a plain
+    // request at all ("response exceeds maxBytes", 2026-10-25).
     var describeHost = async (job2, url) => {
       try {
-        const response = await http.request(url, { maxBytes: 64 * 1024 });
-        const header = (key) => String(response.headers?.[key] ?? "-").slice(0, 80);
-        console.log(`[download-queue] ${job2.id}: the host answers ${response.status} to a plain request, ${header("content-type")}, ${header("content-length")} bytes, ${header("content-disposition")}`);
+        const response = await http.request(url, { headers: { Range: "bytes=0-0" }, maxBytes: 8 * 1024 });
+        const header = (key) => String(response.headers?.[key] ?? "-").slice(0, 70);
+        console.log(`[download-queue] ${job2.id}: the host answers ${response.status} to a one-byte range, ${header("content-type")}, ${header("accept-ranges")}, ${header("content-range") || header("content-length")} bytes, ${header("content-disposition")}`);
+        // Names only: a signed CDN's values alone are longer than the line app.log keeps.
+        const mark = url.indexOf("?");
+        if (mark > 0) console.log(`[download-queue] ${job2.id}: its query names ${url.slice(mark + 1).split("&").map(part => part.split("=")[0]).join(", ")}`);
       } catch (error2) {
-        console.log(`[download-queue] ${job2.id}: a plain request to the host failed: ${error2.message}`);
+        console.log(`[download-queue] ${job2.id}: a one-byte range of the host failed: ${error2.message}`);
       }
     };
     // One ask of the console: it either takes the link or says no.
     var handOver = async (job2, url, link) => {
       let task;
+      // How long the console took to say no: an immediate no never tried to fetch, a late one did.
+      const asked = Date.now();
       const accepted = await new Promise((resolve) => {
         let settled = false, off = null, timer = null;
         const settle = (value) => {
@@ -505,7 +512,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
           // and neither is a task closed without a code or a reason of its own.
           if (!/cancel/i.test(text) && !(settled && why === "code=0xnone")) console.log(settled
             ? `[download-queue] ${job2.id}: the install failed after the console took the link: ${why}`
-            : `[download-queue] ${job2.id}: the console refused the link: ${why}`);
+            : `[download-queue] ${job2.id}: the console refused the link after ${Date.now() - asked} ms: ${why}`);
           settle(false);
         });
         timer = setTimeout(() => settle(task.snapshot.state === "installing"), STREAM_WATCH_MS);
@@ -536,6 +543,9 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       job2.message = "";
       change();
       console.log(`[download-queue] ${job2.id}: a ${link.kind} PKG${link.total ? ` of ${formatBytes(link.total)}` : ""}, handed to the console's downloads${link.contentId ? ` as ${link.contentId}` : ""}: ${linkForLog(link.url)}`);
+      // How the host served the bytes the console was offered: the same line for a link it takes and one
+      // it refuses is the only way to see what the two hosts do differently (2026-10-25).
+      console.log(`[download-queue] ${job2.id}: the host serves it as ${String(link.headers?.["content-type"] || "-").slice(0, 60)}, ${String(link.headers?.["content-disposition"] || "-").slice(0, 90)}`);
       // The install goes to the internal drive: a full one is a refusal that looks like any other.
       console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
       const shapes = linkShapes(link.url, job2.release.filename || job2.title);

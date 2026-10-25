@@ -37,7 +37,7 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
       requests.push({url, options});
       if (redirect && url === 'https://host.example/f/abc')
         return {status: 302, ok: false, headers: {location: 'https://cdn.example/file.pkg'}, text: async () => ''};
-      return {status, ok: status < 300, headers: status === 206 ? {'content-range': `bytes 0-4095/${size}`} : {}, text: async () => head};
+      return {status, ok: status < 300, headers: status === 206 ? {'content-range': `bytes 0-4095/${size}`, 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="game.pkg"'} : {}, text: async () => head};
     },
   };
   const downloads = {
@@ -175,7 +175,8 @@ test('a link with a query is offered three ways, with the host\'s own answer bes
     'https://cdn.example/file.pkg?a=2&b=1',
   ]);
   assert.equal(fixture.installs[3].path, '/data/downloads/files/game.pkg');
-  assert.ok(lines.some(line => line.includes('the host answers 206 to a plain request')), lines.join('\n'));
+  assert.ok(lines.some(line => line.includes('the host answers 206 to a one-byte range')), lines.join('\n'));
+  assert.ok(lines.some(line => line.includes('its query names b, a')), lines.join('\n'));
 });
 
 // app.log cuts a line at 382 characters: a signed CDN link alone fills one, so the reason and its code
@@ -189,9 +190,9 @@ test('a refusal is logged with its reason and code, not the link in front of the
   } finally {
     console.log = original;
   }
-  const refusal = lines.find(line => line.includes('the console refused the link:'));
+  const refusal = lines.find(line => line.includes('the console refused the link after'));
   assert.ok(refusal, 'the refusal is logged');
-  assert.equal(refusal.split('the console refused the link: ')[1], 'code=0x80990085 The console refused the package.');
+  assert.equal(refusal.split(' ms: ')[1], 'code=0x80990085 The console refused the package.');
   const whole = lines.find(line => line.includes(SIGNED_LINK));
   assert.ok(!whole, `the link never reaches app.log whole: ${whole?.slice(0, 200)}`);
 });
@@ -218,6 +219,7 @@ test('the handoff names the package size, and still reads well when the host giv
   assert.ok(sized.some(line => line.includes('a PS4 PKG of ')), sized.join('\n'));
   assert.ok(unsized.some(line => line.includes('a PS4 PKG, handed to the console')), unsized.join('\n'));
   assert.ok(sized.some(line => line.includes('internal drive free')), sized.join('\n'));
+  assert.ok(sized.some(line => line.includes('the host serves it as application/octet-stream, attachment; filename="game.pkg"')), sized.join('\n'));
 });
 
 test('a file whose first bytes are not a PKG says so before downloading here', async () => {
