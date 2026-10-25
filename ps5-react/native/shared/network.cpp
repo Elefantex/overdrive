@@ -571,8 +571,9 @@ std::string host_of(const std::string& url) {
 // link on a CDN that counts connections per account and answers HTTP 429 with a Retry-After of
 // minutes when a download manager opens too many at once. Such a link is given few connections and
 // the server's own wait, in full; every other host keeps the defaults, unchanged.
-bool debrid_cdn(const std::string& url) {
-  static const char* const domains[] = {"tb-cdn.io", "real-debrid.com", "premiumize.me"};
+// Whether the URL's host is one of `domains` or a name under one.
+template <std::size_t N>
+bool host_in(const std::string& url, const char* const (&domains)[N]) {
   auto host = host_of(url);
   // A port is not part of the domain; a bare IPv6 address keeps its colons and matches nothing.
   if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon)
@@ -584,6 +585,20 @@ bool debrid_cdn(const std::string& url) {
         host[host.size()-length-1] == '.') return true;
   }
   return false;
+}
+
+bool debrid_cdn(const std::string& url) {
+  static const char* const domains[] = {"tb-cdn.io", "real-debrid.com", "premiumize.me"};
+  return host_in(url, domains);
+}
+
+// FileKeeper's download gateways (edge01.fetchio.cc, tunnel<n>.dlproxy.uk) answer every range HTTP 503
+// with Retry-After 60 once a download passes about twenty connections, and the whole download then
+// waits the minute out: 18 connections ran at 7.4 MB/s without one, 40 drew 503s within seconds and
+// averaged 2.4 MB/s with the pauses (issue #77, logs of 2026-10-25). Sixteen stay under it.
+bool connection_capped_gateway(const std::string& url) {
+  static const char* const domains[] = {"fetchio.cc", "dlproxy.uk"};
+  return host_in(url, domains);
 }
 
 // How long a waiter honours the server's Retry-After: the debrid CDNs send several minutes.
@@ -1538,11 +1553,16 @@ void Service::run_job(const std::shared_ptr<Job>& job) {
       std::min(std::max(static_cast<unsigned>(capped/(1024*1024)), 2u), job->request.connections);
     // A debrid CDN counts connections per account and sheds the rest as 429, so it gets eight at
     // most whatever the app asked for; every other host keeps the number the app set.
-    const unsigned limit = debrid ? std::min(asked, 8u) : asked;
+    const bool gateway = connection_capped_gateway(target);
+    const unsigned limit = debrid ? std::min(asked, 8u) : gateway ? std::min(asked, 16u) : asked;
     const unsigned initial = job->request.adaptive ? std::min(8u, limit) : limit;
     if (debrid && asked > limit) {
       platform_log(("download: " + host_of(target) + " is a debrid CDN: " + std::to_string(limit) +
         " connections instead of " + std::to_string(asked) + ", Retry-After honoured up to 300 s").c_str());
+    }
+    if (gateway && asked > limit) {
+      platform_log(("download: " + host_of(target) + " is a FileKeeper gateway: " + std::to_string(limit) +
+        " connections instead of " + std::to_string(asked) + ", past which it answers 503 for a minute").c_str());
     }
     std::vector<Window> windows;
     const auto window_for = [&](const std::string& url) {
