@@ -467,10 +467,18 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     // had in front of it. A one-byte range, because a host that serves 85 GB will not answer a plain
     // request at all ("response exceeds maxBytes", 2026-10-25).
     var describeHost = async (job2, url) => {
+      const header = (response, key) => String(response?.headers?.[key] ?? "-").slice(0, 70);
       try {
         const response = await http.request(url, { headers: { Range: "bytes=0-0" }, maxBytes: 8 * 1024 });
-        const header = (key) => String(response.headers?.[key] ?? "-").slice(0, 70);
-        console.log(`[download-queue] ${job2.id}: the host answers ${response.status} to a one-byte range, ${header("content-type")}, ${header("accept-ranges")}, ${header("content-range") || header("content-length")} bytes, ${header("content-disposition")}`);
+        console.log(`[download-queue] ${job2.id}: the host answers ${response.status} to a one-byte range, ${header(response, "content-type")}, ${header(response, "content-range") || header(response, "content-length")} bytes, ${header(response, "content-disposition")}`);
+        // A HEAD is what a downloader may ask before it fetches, and a pre-signed URL signs the method
+        // it was made for: a 403 here would be a refusal no shape of the link can cure (2026-10-25).
+        try {
+          const head = await http.request(url, { method: "HEAD", maxBytes: 8 * 1024 });
+          console.log(`[download-queue] ${job2.id}: the host answers ${head.status} to a HEAD, ${header(head, "content-length") || header(head, "content-range")} bytes, ${header(head, "etag")}`);
+        } catch (error2) {
+          console.log(`[download-queue] ${job2.id}: the HEAD failed: ${error2.message}`);
+        }
         // Names only: a signed CDN's values alone are longer than the line app.log keeps.
         const mark = url.indexOf("?");
         if (mark > 0) console.log(`[download-queue] ${job2.id}: its query names ${url.slice(mark + 1).split("&").map(part => part.split("=")[0]).join(", ")}`);
