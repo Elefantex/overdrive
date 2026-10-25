@@ -80,7 +80,11 @@
         const body = await json(response);
         if (body?.success) {
           const data = body.data;
-          const token = typeof data === "string" ? data : data?.access_token ?? data?.token ?? data?.api_key ?? data?.apikey;
+          // The field is not documented: the usual names first, then any value shaped like a TorBox
+          // key (a UUID), so a renamed field still links the account.
+          const named = typeof data === "string" ? data : data?.access_token ?? data?.token ?? data?.api_key ?? data?.apikey;
+          const token = named ?? Object.values(data || {}).find((value) => typeof value === "string" && /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(value));
+          if (!named) console.log(`[device-login] torbox: approved, fields ${Object.keys(data || {}).join(", ")}`);
           if (typeof token !== "string" || !token) throw new Error("TorBox approved the console but sent no key.");
           return { torbox: token.trim() };
         }

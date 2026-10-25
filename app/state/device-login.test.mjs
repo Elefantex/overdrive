@@ -61,6 +61,15 @@ test('TorBox is asked again until the player approves, and its token is the key'
   assert.equal(polls[0].body, JSON.stringify({device_code: TORBOX_START.data.device_code}));
 });
 
+test('a TorBox answer that names its key differently still links the account', async () => {
+  const {http} = service({
+    'https://api.torbox.app/v1/api/user/auth/device/start': [[200, TORBOX_START]],
+    'https://api.torbox.app/v1/api/user/auth/device/token': [[200, {success: true, data: {expires_in: 0, key: '1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b'}}]],
+  });
+  const login = createDeviceLogin({http, service: 'torbox', ...clock()});
+  assert.deepEqual(await login.approved(await login.start()), {torbox: '1b2c3d4e-5f60-4718-9a0b-1c2d3e4f5a6b'});
+});
+
 test('a code that runs out is reported as expired, so the dialog asks for a new one', async () => {
   const {http} = service({
     'https://api.torbox.app/v1/api/user/auth/device/start': [[200, TORBOX_START]],
