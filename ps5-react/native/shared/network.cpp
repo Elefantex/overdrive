@@ -1222,6 +1222,8 @@ bool Service::check_sample(Job& job) {
 }
 
 bool Service::prepare(Job& job) {
+  // The checkpoint identity this job had before the storage root left it, accepted on resume.
+  std::string legacy_identity;
   if (!job.request.storage_root.empty()) {
     job.root_fd = open(job.request.storage_root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (job.root_fd < 0 || fstat(job.root_fd, &job.root_stat) != 0 || !storage_matches(job)) {
@@ -1261,23 +1263,30 @@ bool Service::prepare(Job& job) {
     if (count > max_ranges) { job.fail("too many ranges; increase rangeBytes (maximum 65536 ranges)"); return false; }
     job.completed.resize(static_cast<std::size_t>(count));
     // No URL: signed links change on every resolution while the file stays the same. The validator,
-    // size and hashes identify the bytes; the storage root and the sidecar's path identify the place.
-    Hash hash;
-    const auto validator = !job.etag.empty() ? "etag:"+job.etag : !job.last_modified.empty() ? "modified:"+job.last_modified : "size";
-    for (const auto& value : {validator, job.request.sha256, std::to_string(job.total)}) {
-      hash.update(value.data(), value.size()); hash.update("\0", 1);
-    }
-    for (const auto& source : job.sources) {
-      for (const auto& value : {source.etag, source.piece.sha1,
-                               std::to_string(source.piece.offset), std::to_string(source.piece.size)}) {
+    // size and hashes identify the bytes; the sidecar's path identifies the place. The storage root's
+    // device and inode were part of it once, and a USB drive gets new ones at every boot (issue #94):
+    // since a checkpoint that does not match is now discarded, that identity is still accepted when
+    // read, and the next checkpoint is written without it.
+    const auto checkpoint_identity = [&](bool with_root) {
+      Hash hash;
+      const auto validator = !job.etag.empty() ? "etag:"+job.etag : !job.last_modified.empty() ? "modified:"+job.last_modified : "size";
+      for (const auto& value : {validator, job.request.sha256, std::to_string(job.total)}) {
         hash.update(value.data(), value.size()); hash.update("\0", 1);
       }
-    }
-    if (job.root_fd >= 0) {
-      const auto identity = std::to_string(job.root_stat.st_dev)+":"+std::to_string(job.root_stat.st_ino);
-      hash.update(identity.data(), identity.size());
-    }
-    job.identity = hash.finish();
+      for (const auto& source : job.sources) {
+        for (const auto& value : {source.etag, source.piece.sha1,
+                                 std::to_string(source.piece.offset), std::to_string(source.piece.size)}) {
+          hash.update(value.data(), value.size()); hash.update("\0", 1);
+        }
+      }
+      if (with_root) {
+        const auto identity = std::to_string(job.root_stat.st_dev)+":"+std::to_string(job.root_stat.st_ino);
+        hash.update(identity.data(), identity.size());
+      }
+      return hash.finish();
+    };
+    job.identity = checkpoint_identity(false);
+    if (job.root_fd >= 0) legacy_identity = checkpoint_identity(true);
     if (job.identity.empty()) { job.fail("checkpoint identity hash failed"); return false; }
   }
   struct stat existing;
@@ -1294,7 +1303,9 @@ bool Service::prepare(Job& job) {
       existing.st_size >= 0 && static_cast<std::uint64_t>(existing.st_size) <= job.total && read_all(meta, &saved, sizeof saved) &&
       !std::memcmp(saved.magic, expected.magic, sizeof saved.magic) && saved.total == job.total &&
       saved.range_bytes == job.request.range_bytes && saved.count == job.completed.size() &&
-      !std::memcmp(saved.identity, job.identity.c_str(), 65) && read_all(meta, job.completed.data(), job.completed.size());
+      (!std::memcmp(saved.identity, job.identity.c_str(), 65) ||
+       (!legacy_identity.empty() && !std::memcmp(saved.identity, legacy_identity.c_str(), 65))) &&
+      read_all(meta, job.completed.data(), job.completed.size());
     if (meta >= 0) close(meta);
     for (unsigned char value : job.completed) if (value > 1) valid = false;
     if (valid) for (std::size_t i = 0; i < job.completed.size(); ++i) if (job.completed[i]) {
