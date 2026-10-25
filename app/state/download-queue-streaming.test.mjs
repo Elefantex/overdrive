@@ -15,7 +15,7 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true, lan = '192.168.1.20', saved = null, delivered = () => 0, helper = null, streamMode} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true, lan = '192.168.1.20', saved = null, delivered = () => 0, helper = null, streamMode, endless = false} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
   const requests = [], installs = [], enqueued = [], proxied = [], removed = [];
@@ -47,6 +47,14 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
   const downloads = {
     enqueue(options) {
       enqueued.push(options);
+      if (endless) {
+        // A transfer that runs until it is stopped, as a big one does.
+        files.set(options.destination + '.part', 'part');
+        let stop;
+        const done = new Promise((_, reject) => { stop = reject; });
+        done.catch(() => {});
+        return {done, snapshot: {state: 'downloading'}, subscribe: listener => { listener({state: 'downloading', written: 10, total: 100}); return () => {}; }, cancel: () => stop(new Error('cancelled'))};
+      }
       files.set(options.destination, 'game bytes');
       return {done: Promise.resolve({written: 4096}), snapshot: {state: 'completed'}, subscribe: () => () => {}, cancel: () => {}};
     },
@@ -106,7 +114,7 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
   const release = {id: 'source-1', filename: format === 'binary' ? 'game.binary' : 'game.' + format,
     url: redirect ? 'https://host.example/f/abc' : url, format, provider: 'vikingfile'};
   const id = saved ? saved.jobs[0].id : queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data', {streamMode});
-  return {queue, id, requests, installs, enqueued, proxied, removed};
+  return {queue, id, requests, installs, enqueued, proxied, removed, files};
 }
 
 async function settled(fixture, states = ['installed', 'file-downloaded', 'installer-required', 'failed', 'downloaded']) {
@@ -432,4 +440,16 @@ test('reopened, the app finds the helper still serving and shows its progress', 
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   assert.fail('the helper progress was never shown through to the end');
+});
+
+// Delete on a paused download takes it off the list and its partial off the drive. A second function
+// named like the one that does it once replaced it, and Delete did nothing at all (Horizon, 2026-10-25).
+test('a paused download that is deleted leaves the queue and the drive', async () => {
+  const fixture = harness({format: 'pkg', streamMode: 'here', endless: true});
+  await settled(fixture, ['downloading']);
+  fixture.queue.pause(fixture.id);
+  await settled(fixture, ['paused']);
+  await fixture.queue.cancel(fixture.id);
+  assert.equal(fixture.queue.snapshot().find(item => item.id === fixture.id), undefined);
+  assert.ok(![...fixture.files.keys()].some(path => path.endsWith('.part')), [...fixture.files.keys()].join(', '));
 });

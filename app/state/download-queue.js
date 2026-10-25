@@ -421,6 +421,12 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       // with Retry-After 60, and averaged 2.7 MB/s for 106 minutes (issue #77, Elefantex's log). A
       // transfer idle for three quarters of the last 300 s (with the stall time at 90 s) is restarted too.
       const idleWindow = stallMs * 10 / 3, idleGap = stallMs * 2 / 9;
+      // FileKeeper's gateway still answered 503 with Retry-After 60 after 96 s at 11 MB/s on sixteen
+      // connections, and the download sat out 52 s of it (2026-10-25). Its form gives a new link after a
+      // five-second countdown, so 12 s of nothing asks for one instead of waiting the minute; when the
+      // first new link brings nothing back either, this download waits the gateway out as before.
+      const quickMs = stallMs * 2 / 15;
+      const filekeeper = sourceKind(job2.release) === "filekeeper" && !job2.parts;
       const restart = (relink, line) => {
         console.log(`[download-queue] ${job2.id}: ${line}${relink ? ", with a new link from the source" : ""}`);
         if (relink) delete job2.options;
@@ -437,6 +443,10 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
             console.log(`[download-queue] ${job2.id}: receiving again after ${job2.stalls} restart(s)`);
             delete job2.stalls;
           }
+          if (best >= 0 && job2.quickRelinkAt) {
+            console.log(`[download-queue] ${job2.id}: the new link brought it back ${Math.round((Date.now() - job2.quickRelinkAt) / 1e3)} s after it was asked for`);
+            delete job2.quickRelinkAt;
+          }
           const now = Date.now();
           if (best >= 0 && now - moved >= idleGap) gaps.push({ at: now, gap: now - moved });
           gaps = gaps.filter((item) => now - item.at < idleWindow);
@@ -452,7 +462,24 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
           restart(relink, `idle ${Math.round(idle / 1e3)} s of the last ${Math.round(idleWindow / 1e3)} s in bursts and waits (${gaps.length} waits); restart ${job2.idleRestarts} of ${STALL_RESTARTS}`);
           return;
         }
-        if (active2?.restarting || Date.now() - moved < stallMs || !["connecting", "downloading"].includes(progress.state) || !restartsAfterStall(job2)) return;
+        const quiet = Date.now() - moved;
+        if (filekeeper && !active2?.restarting && progress.state === "downloading" && quiet >= quickMs && job2.quickRelink !== false) {
+          // A new link that went quiet as well: the gateway is not refusing the link, so another one
+          // will not help either, and this download waits it out with the rules below.
+          if (job2.quickRelinkAt) {
+            if (Date.now() - job2.quickRelinkAt >= quickMs * 4) {
+              console.log(`[download-queue] ${job2.id}: a new link did not bring it back; waiting FileKeeper's gateway out instead`);
+              job2.quickRelink = false;
+              delete job2.quickRelinkAt;
+            }
+          } else if ((job2.quickRelinks || 0) < 30) {
+            job2.quickRelinks = (job2.quickRelinks || 0) + 1;
+            job2.quickRelinkAt = Date.now();
+            restart(true, `nothing received for ${Math.round(quiet / 1e3)} s on FileKeeper's gateway; a new link instead of waiting its minute out (${job2.quickRelinks} of 30)`);
+            return;
+          }
+        }
+        if (active2?.restarting || quiet < stallMs || !["connecting", "downloading"].includes(progress.state) || !restartsAfterStall(job2)) return;
         if ((job2.stalls || 0) >= STALL_RESTARTS) return;
         job2.stalls = (job2.stalls || 0) + 1;
         // Only FileKeeper's link comes from a form the app posts again; DataNodes' needs the browser.
@@ -636,7 +663,9 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         return null;
       }
     };
-    var forget = (served) => served.background ? helper?.remove(served.token) : packages?.proxyRemove?.(served.token);
+    // Stops serving a link. Not "forget": that one deletes a job's files and drops it from the queue, and
+    // a second function of that name replaced it, so Delete removed nothing (2026-10-25).
+    var unserve = (served) => served.background ? helper?.remove(served.token) : packages?.proxyRemove?.(served.token);
     // What the host answers: the console's refusal names no cause, and this is the response it would have
     // had in front of it. A one-byte range, because a host that serves 85 GB will not answer a plain
     // request at all ("response exceeds maxBytes", 2026-10-25).
@@ -762,7 +791,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         await task.done.catch(() => {});
       }
       // A link the console never took is not served.
-      if (served && !taken?.proxied) void forget(served);
+      if (served && !taken?.proxied) void unserve(served);
       if (job2.state === "pausing") return true;
       if (!accepted) {
         job2.state = "resolving";
@@ -2156,7 +2185,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         // A removed row stops serving its package: the console's download of it stops too.
         if (job2.proxy && !job2.proxy.done) {
           unwatch(job2.id);
-          void forget(job2.proxy);
+          void unserve(job2.proxy);
         }
         const previous = jobs;
         jobs = jobs.filter((item) => item !== job2);

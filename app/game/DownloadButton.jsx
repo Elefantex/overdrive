@@ -68,7 +68,9 @@ import { DownloadFormats, Platform, Text, View, motion } from '@ps5-react/core';
     const need = spaceNeeded(release, roots[storage]);
     const lacking = download.status === "idle" && need && free[storage] !== null && free[storage] < need + MARGIN2;
     const stale = ["paused", "failed"].includes(download.status) && STALE_PARTIAL.test(cause(error2));
-    const status = lacking ? "no-space" : stale ? "stale" : download.status;
+    // A PKG the PS5's Downloads took is theirs to install: "Installed" here said what had not happened.
+    const streamedOut = job2?.state === "installed" && job2.streamed;
+    const status = lacking ? "no-space" : stale ? "stale" : streamedOut ? "streamed" : download.status;
     // A new download first shows what the chosen source is and how to use it (DownloadTipsDialog);
     // resuming, installing or pausing one already queued goes straight on.
     // A PKG goes to the PS5's own Downloads, in the background, or stays in Overdrive: the player says
@@ -136,7 +138,7 @@ import { DownloadFormats, Platform, Text, View, motion } from '@ps5-react/core';
     const problem = browser ? {
       title: step ? t2("download.browser.partTitle", step) : t2("download.browser.title"),
       action: t2("download.browser.action")
-    } : error2 ? explainError(error2, Boolean(job2?.release.parts)) : lacking ? { title: t2("download.noFit"), action: spaceAdvice(roots, free, storage, need) } : shadowMount || status === "installed" ? null : { title: t2("shadowMount.offTitle"), action: t2("shadowMount.offAction") };
+    } : error2 ? explainError(error2, Boolean(job2?.release.parts)) : lacking ? { title: t2("download.noFit"), action: spaceAdvice(roots, free, storage, need) } : shadowMount || status === "installed" || status === "streamed" ? null : { title: t2("shadowMount.offTitle"), action: t2("shadowMount.offAction") };
     const notice = job2?.message;
     const pick2 = (index) => {
       if (index !== selected && job2 && !written && ["awaiting-browser", "failed", "paused"].includes(job2.state)) downloadQueue().remove(job2.id);
