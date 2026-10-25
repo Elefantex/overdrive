@@ -24,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
+#include <new>
 #include <poll.h>
 #include <sys/socket.h>
 #include <thread>
@@ -62,7 +63,7 @@ struct Link {
   // Read-ahead (see the ring below); everything here is reachable only through `ring_mutex`.
   std::mutex ring_mutex;
   std::condition_variable ring_cv;
-  std::vector<char> ring;
+  std::unique_ptr<char[]> ring;  // kRingBytes, or nothing while the ring is asleep
   std::uint64_t base = 0;    // the file offset ring[0] is
   std::uint64_t have = 0;    // bytes valid from base, contiguous
   std::uint64_t filled = 0;  // bytes from base claimed by chunks, always >= have
@@ -223,8 +224,8 @@ std::size_t ring_body(char* data, std::size_t size, std::size_t count, void* use
   std::lock_guard lock(link.ring_mutex);
   if (job.generation != link.generation || job.got + length > job.length) return 0;
   const std::int64_t at = static_cast<std::int64_t>(job.file_offset + job.got) - static_cast<std::int64_t>(link.base);
-  if (at < 0 || static_cast<std::size_t>(at) + length > link.ring.size()) return 0;
-  std::memcpy(link.ring.data() + at, data, length);
+  if (at < 0 || static_cast<std::size_t>(at) + length > kRingBytes) return 0;
+  std::memcpy(link.ring.get() + at, data, length);
   job.got += length;
   return length;
 }
@@ -331,8 +332,7 @@ void ring_loop(std::shared_ptr<Link> link) {
     curl_multi_cleanup(multi);
   }
   std::lock_guard lock(link->ring_mutex);
-  link->ring.clear();
-  link->ring.shrink_to_fit();
+  link->ring.reset();
   link->base = link->have = link->filled = 0;
   ++link->generation;
   link->filling = false;
@@ -342,14 +342,16 @@ void ring_loop(std::shared_ptr<Link> link) {
 // Allocates the ring and starts its thread; the caller holds `ring_mutex`.
 bool start_ring(const std::shared_ptr<Link>& link) {
   if (link->broken) return false;
-  if (link->ring.size() != kRingBytes) {
-    try { link->ring.assign(kRingBytes, 0); } catch (const std::exception&) { link->broken = true; return false; }
+  // Nothrow new: the build has no exceptions, and a ring that cannot be allocated is a range served
+  // the old way, not a crash.
+  if (!link->ring) {
+    link->ring.reset(new (std::nothrow) char[kRingBytes]);
+    if (!link->ring) { link->broken = true; return false; }
   }
   if (!link->filling) {
     link->filling = true;
     log(link->tag + " fetching ahead in " + std::to_string(kChunkJobs) + " origin connections");
-    try { std::thread(ring_loop, link).detach(); }
-    catch (const std::exception&) { link->filling = false; link->broken = true; return false; }
+    std::thread(ring_loop, link).detach();
   }
   return true;
 }
@@ -374,7 +376,7 @@ int serve_from_ring(const std::shared_ptr<Link>& link, int fd, const char* head,
     if (const std::uint64_t delta = first - link->base) {
       // The console has read past this: drop it, so the window keeps room ahead of what it asks.
       const std::uint64_t kept = link->have - delta;
-      std::memmove(link->ring.data(), link->ring.data() + delta, static_cast<std::size_t>(kept));
+      std::memmove(link->ring.get(), link->ring.get() + delta, static_cast<std::size_t>(kept));
       link->base = first;
       link->have = kept;
       link->filled -= delta;
@@ -385,16 +387,16 @@ int serve_from_ring(const std::shared_ptr<Link>& link, int fd, const char* head,
     const unsigned gen = link->generation;
     const auto deadline = Clock::now() + std::chrono::milliseconds(kRingWaitMs);
     while (link->have < at + length) {
-      if (link->broken || link->ring.size() != kRingBytes) break;
+      if (link->broken || !link->ring) break;
       if (link->generation != gen) break;
       if (link->ring_cv.wait_until(lock, deadline) == std::cv_status::timeout) return 0;
     }
     if (link->broken) return 0;
-    if (link->generation != gen || link->ring.size() != kRingBytes) continue;
+    if (link->generation != gen || !link->ring) continue;
     // A whole range, from memory: the answer cannot be short, and the connection stays open for the
     // console's next range.
-    std::vector<char> body(link->ring.begin() + static_cast<std::ptrdiff_t>(at),
-                           link->ring.begin() + static_cast<std::ptrdiff_t>(at + length));
+    std::vector<char> body(link->ring.get() + static_cast<std::ptrdiff_t>(at),
+                           link->ring.get() + static_cast<std::ptrdiff_t>(at + length));
     lock.unlock();
     const bool sent = send_all(fd, head, head_size) && send_all(fd, body.data(), body.size());
     if (sent) link->delivered += length;
