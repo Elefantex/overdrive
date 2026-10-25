@@ -86,9 +86,12 @@
 //                                  the console's install service (PS5 only, needs the payload loader on 9021);
 //                                  ABI v20: `path` may be an http(s) link the console downloads itself, with
 //                                  a PS4 package's `contentId`
-//   packages.proxy(url, total, file) ABI v21; "http://127.0.0.1:<port>/<token>/<file>.pkg" serving `url`
-//                                  (`total` bytes) for the console's queue: HEAD answered here, GET ranges
-//                                  fetched from `url`; works while the app runs (see pkg_proxy.hpp)
+//   packages.proxy(url, total, file, token, port) ABI v21; {url, localUrl, token, port}: `url` (`total`
+//                                  bytes) served for the console's queue at the LAN address and on
+//                                  127.0.0.1, HEAD answered here, GET ranges fetched from `url`; works while
+//                                  the app runs; an earlier token and port ask for the same link (pkg_proxy.hpp)
+//   packages.proxyStats()          [{token, total, delivered, requests, idleMs}] of the links served
+//   packages.proxyRemove(token)    forgets one link
 //   packages.cancel(id)            stops reporting; an install the console accepted carries on
 //   packages.poll()                state/error/contentId/status/written/total; consumes terminal results
 //   network.version()              transport version string

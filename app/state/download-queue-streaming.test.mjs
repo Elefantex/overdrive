@@ -15,10 +15,14 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true, lan = '192.168.1.20', saved = null, delivered = () => 0} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
-  const requests = [], installs = [], enqueued = [], proxied = [];
+  const requests = [], installs = [], enqueued = [], proxied = [], removed = [];
+  if (saved) {
+    dirs.add('/data/overdrive');
+    files.set('/data/overdrive/downloads.json', JSON.stringify(saved));
+  }
   const fs = {
     exists: path => dirs.has(path) || files.has(path),
     stat: path => dirs.has(path) ? {isDirectory: true, device: 'dev', inode: 'root', modified: 0} :
@@ -50,11 +54,17 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
   const packages = {
     // The engine's own link to the package (ABI v21); `proxy: false` is an engine without it, and
     // 'fails' one that cannot listen.
-    ...proxy ? {proxy(request) {
-      proxied.push(request);
-      if (proxy === 'fails') throw new Error('packages.proxy: listen on 127.0.0.1: Operation not permitted');
-      return `http://127.0.0.1:41000/0123456789abcdef/${request.file}`;
-    }} : {},
+    ...proxy ? {
+      proxy(request) {
+        proxied.push(request);
+        if (proxy === 'fails') throw new Error('packages.proxy: listen: Operation not permitted');
+        const token = request.token || 'a'.repeat(64);
+        const port = request.port || 41000;
+        return {url: lan ? `http://${lan}:${port}/${token}/${request.file}` : '', localUrl: `http://127.0.0.1:${port}/${token}/${request.file}`, token, port};
+      },
+      proxyStats: () => proxied.map(request => ({token: request.token || 'a'.repeat(64), total: request.total, delivered: delivered(), requests: 3, idleMs: 0})),
+      proxyRemove: token => removed.push(token),
+    } : {},
     install(request) {
       installs.push(request);
       const listeners = new Set();
@@ -94,8 +104,8 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
   });
   const release = {id: 'source-1', filename: format === 'binary' ? 'game.binary' : 'game.' + format,
     url: redirect ? 'https://host.example/f/abc' : url, format, provider: 'vikingfile'};
-  const id = queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data');
-  return {queue, id, requests, installs, enqueued, proxied};
+  const id = saved ? saved.jobs[0].id : queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data');
+  return {queue, id, requests, installs, enqueued, proxied, removed};
 }
 
 async function settled(fixture, states = ['installed', 'file-downloaded', 'installer-required', 'failed', 'downloaded']) {
@@ -142,17 +152,19 @@ test('a host that ignores ranges downloads here', async () => {
 test('a link the console refuses downloads here instead, and is not offered again', async () => {
   const fixture = harness({console: 'refused', format: 'pkg'});
   const job = await settled(fixture);
-  assert.equal(fixture.installs.length, 3, "the link, the app's own link to it, then the downloaded file");
-  assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
+  assert.equal(fixture.installs.length, 4, "the link, the app's link on the LAN and on 127.0.0.1, then the downloaded file");
+  assert.equal(fixture.installs[3].path, '/data/downloads/files/game.pkg');
   assert.equal(fixture.enqueued.length, 1);
   assert.equal(job.streamTried, true);
   assert.equal(job.streamed, undefined);
+  assert.deepEqual(fixture.removed, ['a'.repeat(64)], 'a link the console never took is not served');
 });
 
 // A pre-signed link answers the console's HEAD 403 (it signs only the GET), and the console refuses it
-// with 0x80B22403 (the user's Vikingfile logs, 2026-10-25). The app's own link answers that HEAD.
-test('a refused link is offered again through the app, and taken there', async () => {
-  const fixture = harness({console: url => url.startsWith('http://127.0.0.1') ? 'accepted' : 'refused', format: 'pkg'});
+// with 0x80B22403 (the user's Vikingfile logs, 2026-10-25). The app's own link answers that HEAD, on
+// the console's LAN address first, as Pegasus DL+ serves its packages.
+test('a refused link is offered again through the app on the LAN, and taken there', async () => {
+  const fixture = harness({console: url => url.startsWith('http://192.168.') ? 'accepted' : 'refused', format: 'pkg'});
   const job = await settled(fixture);
   assert.equal(job.state, 'installed', job.error);
   assert.equal(job.streamed, true);
@@ -160,10 +172,28 @@ test('a refused link is offered again through the app, and taken there', async (
   assert.equal(job.message, 'downloads.streamedProxy');
   assert.deepEqual(fixture.installs.map(item => [item.url, item.contentId]), [
     ['https://cdn.example/file.pkg', PS4_ID],
-    ['http://127.0.0.1:41000/0123456789abcdef/game.pkg', PS4_ID],
+    ['http://192.168.1.20:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg', PS4_ID],
   ]);
   assert.deepEqual(fixture.proxied, [{url: 'https://cdn.example/file.pkg', total: 100e9, file: 'game.pkg'}]);
+  assert.equal(job.proxy.token, 'a'.repeat(64));
+  assert.equal(job.proxy.port, 41000);
+  assert.equal(job.proxy.origin, 'https://cdn.example/file.pkg');
   assert.equal(fixture.enqueued.length, 0);
+  assert.equal(fixture.removed.length, 0);
+});
+
+test('a console that refuses the LAN address is offered 127.0.0.1', async () => {
+  const fixture = harness({console: url => url.startsWith('http://127.0.0.1') ? 'accepted' : 'refused', format: 'pkg'});
+  const job = await settled(fixture);
+  assert.equal(job.state, 'installed', job.error);
+  assert.deepEqual(fixture.installs.map(item => item.url), ['https://cdn.example/file.pkg', 'http://192.168.1.20:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg', 'http://127.0.0.1:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg']);
+});
+
+test('a console with no LAN address goes straight to 127.0.0.1', async () => {
+  const fixture = harness({console: 'refused', format: 'pkg', lan: ''});
+  await settled(fixture);
+  assert.deepEqual(fixture.installs.slice(0, 2).map(item => item.url), ['https://cdn.example/file.pkg', 'http://127.0.0.1:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg']);
+  assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
 });
 
 test('a link the console takes as it came is never served by the app', async () => {
@@ -209,14 +239,53 @@ test("a refused link with a query has the host's own answer beside it", async ()
   } finally {
     console.log = original;
   }
-  assert.deepEqual(fixture.installs.slice(0, 2).map(item => item.url), [
-    'https://cdn.example/file.pkg?b=1&a=2',
-    'http://127.0.0.1:41000/0123456789abcdef/game.pkg',
-  ]);
-  assert.equal(fixture.installs[2].path, '/data/downloads/files/game.pkg');
+  assert.deepEqual(fixture.installs.slice(0, 3).map(item => item.url), ['https://cdn.example/file.pkg?b=1&a=2', 'http://192.168.1.20:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg', 'http://127.0.0.1:41000/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/game.pkg']);
+  assert.equal(fixture.installs[3].path, '/data/downloads/files/game.pkg');
   assert.ok(lines.some(line => line.includes('the host answers 206 to a one-byte range')), lines.join('\n'));
   assert.ok(lines.some(line => line.includes('its query names b, a')), lines.join('\n'));
-  assert.ok(lines.some(line => line.includes('offered it again through Overdrive to the console: http://127.0.0.1:41000/')), lines.join('\n'));
+  assert.ok(lines.some(line => line.includes('offered it again through Overdrive to the console: http://192.168.1.20:41000/')), lines.join('\n'));
+});
+
+// Closed and opened again, the app serves the same URL on the same token and port, so the console's
+// queue reconnects to it without a second install; once every byte went out, it is no longer served.
+function servedJob(proxy) {
+  return {version: 1, jobs: [{
+    id: 'CUSA04013/source-1', gameId: 'CUSA04013', title: 'Titanfall 2', root: '/data', state: 'installed', streamed: true, proxied: true,
+    release: {id: 'source-1', filename: 'game.pkg', url: 'https://cdn.example/file.pkg', format: 'pkg', provider: 'vikingfile'},
+    artifact: {directory: '/data/downloads/files', destination: '/data/downloads/files/game.pkg', nextAction: 'installer-required'},
+    proxy,
+  }]};
+}
+
+test('after a restart the package is served again on its own token and port, with its progress', async () => {
+  const proxy = {token: 'b'.repeat(64), port: 41234, origin: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', since: Date.now()};
+  let sent = 1e9;
+  const fixture = harness({saved: servedJob(proxy), delivered: () => sent});
+  assert.deepEqual(fixture.proxied, [{url: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', token: 'b'.repeat(64), port: 41234}]);
+  const progress = await new Promise(resolve => {
+    const off = fixture.queue.subscribe(jobs => {
+      const job = jobs.find(item => item.id === fixture.id);
+      if (job?.message === 'downloads.proxyProgress') { off?.(); resolve(job); }
+    });
+  });
+  assert.equal(progress.state, 'installed');
+  sent = 4e9;
+  for (const until = Date.now() + 8000; Date.now() < until;) {
+    const job = fixture.queue.snapshot().find(item => item.id === fixture.id);
+    if (job.proxy.done) {
+      assert.equal(job.message, 'downloads.proxyDone');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail('the package was never marked as fetched');
+});
+
+test('a package served more than a week ago, or already fetched, is not served again', async () => {
+  const old = harness({saved: servedJob({token: 'c'.repeat(64), port: 41000, origin: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', since: Date.now() - 8 * 24 * 3600e3})});
+  assert.equal(old.proxied.length, 0);
+  const done = harness({saved: servedJob({token: 'd'.repeat(64), port: 41000, origin: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', since: Date.now(), done: true})});
+  assert.equal(done.proxied.length, 0);
 });
 
 // app.log cuts a line at 382 characters: a signed CDN link alone fills one, so the reason and its code

@@ -551,16 +551,24 @@ characters at offset 0x40 of its header, which the app reads with a ranged
 request); a PS5 one goes without. Its progress shows in the console's
 Downloads; `cancel()` stops reporting here only.
 
-`Packages.proxy({url, total, file})` (ABI v21) returns
-`http://127.0.0.1:<port>/<token>/<file>.pkg`, a link to `url` served by the
-app for the console's queue. The console asks a link with a `HEAD` before it
-fetches, and a pre-signed S3 or R2 link signs only the `GET` it was made for:
-the origin answers that `HEAD` 403 and the console refuses the package
-(`0x80B22403`). The app answers the `HEAD` from `total`, the size it read with a
-ranged `GET`, and fetches each `GET` range the console asks from `url`, with the
-same transport as downloads. The link works only while the app runs: closing it
-stops the console's download. Its first requests and any origin error are
-logged as `pkg-proxy:` lines.
+`Packages.proxy({url, total, file, token, port})` (ABI v21) serves `url` for
+the console's queue and returns `{url, localUrl, token, port}`: `url` is
+`http://<LAN address>:<port>/<token>/<file>.pkg` (empty when the console has no
+route out) and `localUrl` the same on `127.0.0.1`. The console asks a link with
+a `HEAD` before it fetches, and a pre-signed S3 or R2 link signs only the `GET`
+it was made for: the origin answers that `HEAD` 403 and the console refuses the
+package (`0x80B22403`). The app answers the `HEAD` from `total`, the size it read
+with a ranged `GET`, and fetches each `GET` range the console asks from `url`,
+with the same transport as downloads. The server listens on every interface, so
+each link carries a 256-bit token. Answers carry `Content-Type: application/pkg`,
+`Accept-Ranges: bytes` and `Cache-Control: no-store`; past 16 connections the
+console gets `503` with `Retry-After: 1`. The link works only while the app
+runs. A later session passes the `token` and `port` it got back to serve the same
+URL again, which the console's queue reconnects to; a taken port is logged and
+replaced. `Packages.proxyStats()` returns `{token, total, delivered, requests,
+idleMs}` for each link (`delivered` counts body bytes sent, a range asked twice
+twice) and `Packages.proxyRemove(token)` forgets one. Its first requests and any
+origin error are logged as `pkg-proxy:` lines.
 
 ## Archive extraction
 

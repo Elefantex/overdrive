@@ -172,6 +172,8 @@
     "downloads.installed": "Installed. It's on the home screen.",
     "downloads.streamed": "The PS5 downloads and installs it: follow it in its Downloads. You can close Overdrive.",
     "downloads.streamedProxy": "The PS5 downloads and installs it through Overdrive: keep Overdrive open until it finishes in the PS5's Downloads.",
+    "downloads.proxyProgress": "The PS5 has fetched {done} of {total} ({percent}%) through Overdrive: keep Overdrive open until it finishes.",
+    "downloads.proxyDone": "The PS5 has every byte: it finishes installing in its Downloads. You can close Overdrive.",
     "downloads.installedFreed": "Installed. The PKG was deleted: {size} freed.",
     "downloads.notice.captured": "Link captured, return to Overdrive",
     "downloads.notice.confirm": "File found, confirm it in Overdrive",

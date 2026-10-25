@@ -147,7 +147,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     const captures = /* @__PURE__ */ new Map();
     // The packages this session serves to the console's own download: rest mode would suspend the app
     // and cut them, so the console stays awake while the app runs with one.
-    const served = /* @__PURE__ */ new Set();
+    const serving = /* @__PURE__ */ new Set();
     let jobs = [];
     let active2 = null;
     let ticks = 0;
@@ -183,7 +183,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
     }
     const snapshot = () => jobs.map((job2) => ({ ...job2 }));
     const emit2 = () => {
-      const busy = captures.size > 0 || served.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
+      const busy = captures.size > 0 || serving.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
       if (busy !== awake2) {
         awake2 = busy;
         power.keepAwake(busy);
@@ -200,6 +200,77 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       save();
       emit2();
     };
+    // The packages the app serves to the console's own download (see streamed). Each job keeps its
+    // link's token and port, so a later session serves the same URL again and the console's queue,
+    // which retries it, reconnects without a second install. What the console has fetched shows on the
+    // row; once it has every byte, or after a week, nothing more is served for it.
+    const SERVE_FOR_MS = 7 * 24 * 3600e3;
+    let serveTimer = null;
+    const watchServing = () => {
+      if (serveTimer || !serving.size || typeof packages?.proxyStats !== "function") return;
+      serveTimer = setInterval(() => {
+        let stats = [];
+        try {
+          stats = packages.proxyStats();
+        } catch {
+        }
+        const byToken = new Map(stats.map((item) => [item.token, item]));
+        let shown = false, settled = false;
+        for (const id of [...serving]) {
+          const job2 = jobs.find((item) => item.id === id);
+          const entry = job2?.proxy && byToken.get(job2.proxy.token);
+          if (!entry) {
+            serving.delete(id);
+            settled = true;
+            continue;
+          }
+          const fetched = Math.min(entry.delivered, entry.total);
+          if (fetched >= entry.total) {
+            job2.proxy.done = true;
+            serving.delete(id);
+            job2.message = t("downloads.proxyDone");
+            console.log(`[download-queue] ${id}: the console has fetched every byte (${entry.requests} requests); it installs the rest by itself`);
+            settled = true;
+            continue;
+          }
+          const message = t("downloads.proxyProgress", { done: formatBytes(fetched), total: formatBytes(entry.total), percent: String(Math.floor(fetched / entry.total * 100)) });
+          if (message !== job2.message) {
+            job2.message = message;
+            shown = true;
+          }
+        }
+        if (!serving.size) {
+          clearInterval(serveTimer);
+          serveTimer = null;
+        }
+        // Progress is only shown; what changes the job for good is saved.
+        if (settled) change();
+        else if (shown) emit2();
+      }, 3e3);
+      serveTimer.unref?.();
+    };
+    // After a restart: every link still being fetched is served again, on its own token and port.
+    const resumeServing = () => {
+      if (typeof packages?.proxy !== "function" || platform !== "ps5") return;
+      for (const job2 of jobs) {
+        const proxy = job2.proxy;
+        if (!proxy || proxy.done) continue;
+        if (Date.now() - (proxy.since || 0) > SERVE_FOR_MS) {
+          proxy.done = true;
+          continue;
+        }
+        try {
+          const again = packages.proxy({ url: proxy.origin, total: proxy.total, file: proxy.file, token: proxy.token, port: proxy.port });
+          if (again.port !== proxy.port) console.log(`[download-queue] ${job2.id}: served again on port ${again.port}, not ${proxy.port}: the console's download cannot reconnect, so Retry it in the PS5's Downloads or download it again`);
+          else console.log(`[download-queue] ${job2.id}: served to the console again after a restart (${formatBytes(proxy.total)})`);
+          serving.add(job2.id);
+          job2.message = t("downloads.streamedProxy");
+        } catch (error2) {
+          console.log(`[download-queue] ${job2.id}: not served again: ${error2.message}`);
+        }
+      }
+      watchServing();
+    };
     if (legacy !== file && fs.exists(legacy)) {
       try {
         if (stored === legacy) save();
@@ -215,6 +286,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         console.log(`[download-queue] queue not saved to ${file}: ${error2.message}`);
       }
     }
+    resumeServing();
     // A finished download that stayed a ".binary" before its header check knew PS5 packages and its
     // name was read (issues #24, #42) is routed now, once at launch, as a new one would be: a game
     // image to the homebrew folder for ShadowMount+, a PKG to the packages folder to install. One
@@ -468,14 +540,17 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       }
     };
     // The ways the console is offered the package, in order. First the link as it came, which the
-    // console fetches by itself, also once the app has closed. Then the same file served by the app
-    // from 127.0.0.1: the console asks a HEAD before it fetches, and a pre-signed link (Vikingfile's S3
-    // storage) signs only the GET it was made for, so the HEAD got 403 and the console refused it with
-    // 0x80B22403 whatever shape the link had (".pkg" on the end and a sorted query were tried and
-    // refused alike, 2026-10-25). The first shape the console takes is the one it installs.
+    // console fetches by itself, also once the app has closed. Then the same file served by the app:
+    // the console asks a HEAD before it fetches, and a pre-signed link (Vikingfile's S3 storage) signs
+    // only the GET it was made for, so the HEAD got 403 and the console refused it with 0x80B22403
+    // whatever shape the link had (".pkg" on the end and a sorted query were tried and refused alike,
+    // 2026-10-25). The app's link names the console's LAN address, which its queue treats as any other
+    // origin (Pegasus DL+ serves its packages the same way), and 127.0.0.1 after it. The first shape the
+    // console takes is the one it installs.
     var linkShapes = (link) => {
       const shapes = [{ name: "as it came", url: link.url }];
-      if (typeof packages?.proxy === "function" && link.total) shapes.push({ name: "through Overdrive", proxied: true });
+      if (typeof packages?.proxy === "function" && link.total)
+        shapes.push({ name: "through Overdrive", proxied: "url" }, { name: "through Overdrive on 127.0.0.1", proxied: "localUrl" });
       return shapes;
     };
     // The app's own link to the package, or null when it cannot serve one (an older engine, no socket).
@@ -581,11 +656,14 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       // The install goes to the internal drive: a full one is a refusal that looks like any other.
       console.log(`[download-queue] ${job2.id}: internal drive free ${internalFree()}`);
       const shapes = linkShapes(link);
-      let task = null, accepted = false, taken = null;
+      let task = null, accepted = false, taken = null, served;
       for (let attempt = 0; attempt < shapes.length && !accepted && job2.state !== "pausing"; attempt++) {
         const shape = shapes[attempt];
-        const url = shape.proxied ? proxyLink(job2, link) : shape.url;
-        if (!url) break;
+        // Served once, offered on each address: a console without a LAN address skips that one.
+        if (shape.proxied && served === void 0) served = proxyLink(job2, link);
+        if (shape.proxied && !served) break;
+        const url = shape.proxied ? served[shape.proxied] : shape.url;
+        if (!url) continue;
         // The app's own link names no secret: it goes to app.log whole.
         if (attempt) console.log(`[download-queue] ${job2.id}: offered it again ${shape.name} to the console: ${shape.proxied ? url : linkForLog(url)}`);
         const answer = await handOver(job2, url, link);
@@ -602,6 +680,8 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         task.cancel();
         await task.done.catch(() => {});
       }
+      // A link the console never took is not served.
+      if (served && !taken?.proxied) packages.proxyRemove?.(served.token);
       if (job2.state === "pausing") return true;
       if (!accepted) {
         job2.state = "resolving";
@@ -615,10 +695,13 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       job2.streamed = true;
       job2.written = job2.total || 0;
       job2.bytesPerSecond = 0;
-      // Served by the app, the console's download lasts as long as the app does.
+      // Served by the app, the console's download lasts as long as the app does, or until a later
+      // session serves it again from what is kept here.
       if (taken.proxied) {
         job2.proxied = true;
-        served.add(job2.id);
+        job2.proxy = { token: served.token, port: served.port, origin: link.url, total: link.total, file: job2.release.filename || job2.title, since: Date.now() };
+        serving.add(job2.id);
+        watchServing();
       }
       job2.message = t(taken.proxied ? "downloads.streamedProxy" : "downloads.streamed");
       notifications.show(t("downloads.notice.streamed"), job2.title);
@@ -1986,6 +2069,11 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         const job2 = find(id);
         if (!["paused", "failed", "awaiting-browser", ...COMPLETE].includes(job2.state) || active2?.job === job2) return;
         stopCapture(job2);
+        // A removed row stops serving its package: the console's download of it stops too.
+        if (job2.proxy && !job2.proxy.done) {
+          serving.delete(job2.id);
+          packages?.proxyRemove?.(job2.proxy.token);
+        }
         const previous = jobs;
         jobs = jobs.filter((item) => item !== job2);
         try {
