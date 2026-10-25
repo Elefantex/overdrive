@@ -397,6 +397,7 @@ Nothing else in the framework is changed.
 - **[ShadowMount+](https://github.com/drakmor/ShadowMountPlus)** by drakmor, which installs it.
 - **[kstuff](https://github.com/EchoStretch/kstuff-lite)** by EchoStretch, the kernel payload that lets the console run homebrew and the games it installs.
 - **[PS5 Homebrew Catalog](https://github.com/darkxex/ps5-homebrew-catalog)** by darkxex, the store API behind the Homebrew section, and every developer listed in it.
+- **[QR Code generator](https://github.com/nayuki/QR-Code-generator)** by Project Nayuki (MIT), which draws the QR codes of the phone login; its notice is in `app/third_party/qrcodegen.js`.
 
 `ps5-react/` is GPL-3.0-or-later and carries its own `LICENSE`, `LICENSE-ATTRIBUTION` and
 `NOTICE`. Every dependency notice is copied into `notices/` inside the built app, and
