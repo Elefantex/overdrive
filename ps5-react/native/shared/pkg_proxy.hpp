@@ -31,6 +31,7 @@ struct Stats {
   std::string token;
   std::uint64_t total = 0, delivered = 0, idle_ms = 0;
   unsigned requests = 0;
+  std::uint64_t gets = 0, asked = 0;  // GET requests, and the bytes they asked for together
 };
 // Starts the server on first use and adds the link; false with `error` set when it cannot listen.
 bool serve(const Request& request, Served& out, std::string& error);
@@ -38,7 +39,7 @@ bool serve(const Request& request, Served& out, std::string& error);
 // 127.0.0.1 only: the helper payload is started this way, and the app adds links to it, reads their
 // progress and removes them over HTTP, also from a session that started after the helper did.
 //   GET  /control/<secret>/ping    "ok <port>"
-//   GET  /control/<secret>/stats   one line per link: "<token> <total> <delivered> <requests> <idle ms>"
+//   GET  /control/<secret>/stats   one line per link: "<token> <total> <delivered> <requests> <idle ms> <gets> <asked>"
 //   POST /control/<secret>/add     body "<token or ->\n<total>\n<url>\n<file>": "token=…\nurl=…\nlocal=…\nport=…"
 //   POST /control/<secret>/remove  body "<token>"
 bool start(std::uint16_t port, const std::string& secret, std::uint16_t& bound, std::string& error);

@@ -25,7 +25,7 @@ function world({up = false, savedConfig = null} = {}) {
       const command = url.split('/').pop();
       const answer = text => ({status: 200, text: async () => text});
       if (command === 'ping') return answer('ok 42000\n');
-      if (command === 'stats') return answer([...state.links].map(([token, link]) => `${token} ${link.total} 1000 3 50`).join('\n') + '\n');
+      if (command === 'stats') return answer([...state.links].map(([token, link]) => `${token} ${link.total} 1000 3 50 2 2048`).join('\n') + '\n');
       if (command === 'add') {
         const [token, total, link, file] = options.body.split('\n');
         const named = token === '-' ? 'a'.repeat(64) : token;
@@ -65,5 +65,5 @@ test('a helper still running from before is used as it is, and one that is gone 
 test('the progress of each link is read back from the helper', async () => {
   const {helper} = world({up: true, savedConfig: {port: 42000, secret: 's'.repeat(20)}});
   await helper.add({url: 'https://cdn.example/c.pkg', total: 9000, file: 'c.pkg', token: 'c'.repeat(64)});
-  assert.deepEqual(await helper.stats(), [{token: 'c'.repeat(64), total: 9000, delivered: 1000, requests: 3, idleMs: 50}]);
+  assert.deepEqual(await helper.stats(), [{token: 'c'.repeat(64), total: 9000, delivered: 1000, requests: 3, idleMs: 50, gets: 2, asked: 2048}]);
 });

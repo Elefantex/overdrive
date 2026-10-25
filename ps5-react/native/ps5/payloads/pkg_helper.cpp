@@ -69,10 +69,6 @@ void append(const char* line) {
   std::fclose(file);
 }
 
-// Names resolve over DNS-over-HTTPS to an address, not a name, when the payload's process has no
-// resolver of its own; the cache is shared, so a package's ranges look its host up once.
-CURLSH* share = nullptr;
-std::mutex share_mutex;
 }
 
 // What pkg_proxy.cpp asks of its host, as the app's network.cpp gives it there.
@@ -111,8 +107,8 @@ bool configure_transport(void* handle, const std::string& url, bool follow_redir
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &window, sizeof window);
     return CURL_SOCKOPT_OK;
   });
-  if (share) set(CURLOPT_SHARE, share);
-  // Not every curl build has it: a refusal leaves the system resolver, which may well be enough.
+  // Not every curl build has it: a refusal leaves the system resolver, which may well be enough. The
+  // server's own pool (pkg_proxy.cpp) keeps the names, so a package's host is looked up once.
   curl_easy_setopt(curl, CURLOPT_DOH_URL, "https://1.1.1.1/dns-query");
   return ok;
 }
@@ -128,12 +124,6 @@ int main() {
   }
   if (secret.size() < 16) { say("fail the control secret is too short"); return 1; }
   if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) { say("fail curl did not start"); return 1; }
-  share = curl_share_init();
-  if (share) {
-    curl_share_setopt(share, CURLSHOPT_LOCKFUNC, +[](CURL*, curl_lock_data, curl_lock_access, void*) { share_mutex.lock(); });
-    curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, +[](CURL*, curl_lock_data, void*) { share_mutex.unlock(); });
-    curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
-  }
   std::uint16_t bound = 0;
   std::string error;
   const auto wanted = static_cast<std::uint16_t>(std::strtoul(port_text.c_str(), nullptr, 10));
@@ -145,19 +135,24 @@ int main() {
   say("ready " + std::to_string(bound));
 
   // Every 30 s: what each link sent since the last look, and whether there is anything left to do.
-  std::map<std::string, std::uint64_t> sent;
+  std::map<std::string, std::uint64_t> sent, gets, asked;
   for (;;) {
     std::this_thread::sleep_for(std::chrono::seconds(30));
     bool owed = false;
     for (const auto& item : pkg_proxy::stats()) {
-      const std::uint64_t before = sent[item.token];
+      const std::uint64_t before = sent[item.token], gets_before = gets[item.token], asked_before = asked[item.token];
       sent[item.token] = item.delivered;
+      gets[item.token] = item.gets;
+      asked[item.token] = item.asked;
       if (item.delivered < item.total) owed = true;
       if (item.delivered != before) {
-        char line[200];
-        std::snprintf(line, sizeof line, "%s sent %.1f MB in 30 s (%.1f MB/s), %.1f of %.1f GB, %u requests",
+        // The size of the console's ranges says whether reading ahead of it would help.
+        const std::uint64_t ranges = item.gets - gets_before;
+        char line[240];
+        std::snprintf(line, sizeof line, "%s sent %.1f MB in 30 s (%.1f MB/s), %.1f of %.1f GB, %llu ranges of %.0f KiB on average",
                       item.token.substr(0, 8).c_str(), (item.delivered - before) / 1e6, (item.delivered - before) / 30e6,
-                      item.delivered / 1e9, item.total / 1e9, item.requests);
+                      item.delivered / 1e9, item.total / 1e9, static_cast<unsigned long long>(ranges),
+                      ranges ? (item.asked - asked_before) / 1024.0 / ranges : 0.0);
         network::platform_log(line);
       }
     }
@@ -168,7 +163,6 @@ int main() {
     }
   }
   pkg_proxy::stop();
-  if (share) curl_share_cleanup(share);
   curl_global_cleanup();
   return 0;
 }

@@ -146,9 +146,24 @@ void launch(std::shared_ptr<Helper> helper) {
     result.state = "failed";
     result.error = error;
   } else {
+    // The helper's log lines ("log …") can come before its answer: they go to app.log, and the answer
+    // is the first line that is not one. Taking the first line as the answer turned a helper that had
+    // started into "did not start", and the app served the package itself (2026-10-25).
     std::string line;
-    char byte;
-    while (payload_loader::receive(socket, &byte, 1) == 1 && byte != '\n' && line.size() < 512) line.push_back(byte);
+    for (int lines = 0; lines < 64; ++lines) {
+      line.clear();
+      char byte;
+      bool ended = false;
+      while (payload_loader::receive(socket, &byte, 1) == 1) {
+        if (byte == '\n') { ended = true; break; }
+        if (line.size() < 512) line.push_back(byte);
+      }
+      if (!line.starts_with("log ")) break;
+#if PS5_REACT_NETWORKING
+      network::platform_log(("pkg-helper: " + line.substr(4)).c_str());
+#endif
+      if (!ended) { line.clear(); break; }
+    }
     payload_loader::close(socket);
     if (line.starts_with("ready ")) {
       result.state = "ready";

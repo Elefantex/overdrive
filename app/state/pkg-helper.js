@@ -85,8 +85,8 @@
       if (!config) return [];
       const text = await call("stats");
       return text.split("\n").filter(Boolean).map((line) => {
-        const [token, total, delivered, requests, idleMs] = line.split(" ");
-        return { token, total: Number(total), delivered: Number(delivered), requests: Number(requests), idleMs: Number(idleMs) };
+        const [token, total, delivered, requests, idleMs, gets = "0", asked = "0"] = line.split(" ");
+        return { token, total: Number(total), delivered: Number(delivered), requests: Number(requests), idleMs: Number(idleMs), gets: Number(gets), asked: Number(asked) };
       });
     }
 

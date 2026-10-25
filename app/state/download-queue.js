@@ -261,9 +261,12 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         // Every 30 s, how fast the console takes it: the one number that compares this with a
         // download in Overdrive.
         if (looks % 10 === 0) {
-          const before = sentBefore.get(id) ?? 0;
-          sentBefore.set(id, entry.delivered);
-          if (entry.delivered > before) console.log(`[download-queue] ${id}: the console fetched ${formatBytes(entry.delivered - before)} in 30 s (${((entry.delivered - before) / 30 / 1048576).toFixed(1)} MB/s) from the ${where === "helper" ? "helper" : "app"}, ${Math.floor(fetched / entry.total * 100)}%`);
+          const before = sentBefore.get(id) ?? { delivered: 0, gets: 0, asked: 0 };
+          sentBefore.set(id, { delivered: entry.delivered, gets: entry.gets || 0, asked: entry.asked || 0 });
+          // The size of the console's ranges says whether reading ahead of it would help.
+          const ranges = (entry.gets || 0) - before.gets;
+          const size = ranges > 0 ? `, ${ranges} ranges of ${Math.round(((entry.asked || 0) - before.asked) / ranges / 1024)} KiB on average` : "";
+          if (entry.delivered > before.delivered) console.log(`[download-queue] ${id}: the console fetched ${formatBytes(entry.delivered - before.delivered)} in 30 s (${((entry.delivered - before.delivered) / 30 / 1048576).toFixed(1)} MB/s) from the ${where === "helper" ? "helper" : "app"}, ${Math.floor(fetched / entry.total * 100)}%${size}`);
         }
         if (fetched >= entry.total) {
           job2.proxy.done = true;

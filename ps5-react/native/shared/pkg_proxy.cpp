@@ -37,8 +37,9 @@ constexpr int kSendFlags = MSG_NOSIGNAL;
 #else
 constexpr int kSendFlags = 0;
 #endif
-// The console's queue opens a few connections per package; past this it is asked to come back.
-constexpr unsigned kMaxConnections = 16;
+// The console's queue opens a few connections per package and keeps them open between ranges; past
+// this it is asked to come back.
+constexpr unsigned kMaxConnections = 32;
 // A request line and its headers; the console's are a few hundred bytes.
 constexpr std::size_t kMaxRequest = 8192;
 // The first requests of each link are logged, so app.log shows how the console asks; the rest are not.
@@ -49,6 +50,7 @@ struct Link {
   std::uint64_t total = 0;
   std::atomic<std::uint64_t> delivered{0};
   std::atomic<unsigned> requests{0};
+  std::atomic<std::uint64_t> gets{0}, asked{0};  // GET requests and the bytes they asked for
   std::atomic<std::int64_t> last{0};  // Clock ticks of the last request
 };
 struct Connection {
@@ -83,8 +85,9 @@ bool send_all(int fd, const char* data, std::size_t size) {
   return true;
 }
 
-// Every answer carries what the console's downloader expects of a package origin.
-constexpr const char* kCommon = "Accept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n";
+// Every answer carries what the console's downloader expects of a package origin. A package's own
+// answers keep the connection open for the console's next range; an error closes it.
+constexpr const char* kCommon = "Accept-Ranges: bytes\r\nCache-Control: no-store\r\n";
 
 bool reply_text(int fd, int status, const char* reason, const std::string& body) {
   char head[300];
@@ -95,21 +98,45 @@ bool reply_text(int fd, int status, const char* reason, const std::string& body)
 
 bool reply(int fd, int status, const char* reason, const char* extra = "") {
   char head[300];
-  const int size = std::snprintf(head, sizeof head, "HTTP/1.1 %d %s\r\n%s%sContent-Length: 0\r\n\r\n", status, reason, kCommon, extra);
+  const int size = std::snprintf(head, sizeof head, "HTTP/1.1 %d %s\r\n%s%sConnection: close\r\nContent-Length: 0\r\n\r\n", status, reason, kCommon, extra);
   return send_all(fd, head, static_cast<std::size_t>(size));
 }
 
-// The request line and headers, up to the blank line; false when the client hangs up or sends too much.
-bool read_request(int fd, std::string& out) {
-  char buffer[1024];
-  while (out.find("\r\n\r\n") == std::string::npos) {
+// The request line and headers, up to the blank line, from what the connection holds (`pending`, which
+// keeps whatever follows); false when the client hangs up, stays quiet or sends too much.
+bool read_request(int fd, std::string& pending, std::string& out, int wait_ms) {
+  char buffer[4096];
+  for (;;) {
+    const auto end = pending.find("\r\n\r\n");
+    if (end != std::string::npos) {
+      out = pending.substr(0, end + 4);
+      pending.erase(0, end + 4);
+      return true;
+    }
     pollfd ready{fd, POLLIN, 0};
-    if (stopping || poll(&ready, 1, 10000) <= 0) return false;
+    if (stopping || poll(&ready, 1, wait_ms) <= 0) return false;
     const auto count = recv(fd, buffer, sizeof buffer, 0);
-    if (count <= 0 || out.size() + static_cast<std::size_t>(count) > kMaxRequest) return false;
-    out.append(buffer, static_cast<std::size_t>(count));
+    if (count <= 0 || pending.size() + static_cast<std::size_t>(count) > kMaxRequest) return false;
+    pending.append(buffer, static_cast<std::size_t>(count));
   }
-  return true;
+}
+
+// One pool of origin connections, TLS sessions and names for every request, so a console asking range
+// after range does not pay a new TCP and TLS handshake for each: with a fresh one per range the console
+// took 2.4 MB/s (2026-10-25).
+std::mutex share_locks[CURL_LOCK_DATA_LAST];
+CURLSH* origin_pool() {
+  static CURLSH* pool = [] {
+    CURLSH* made = curl_share_init();
+    if (!made) return made;
+    curl_share_setopt(made, CURLSHOPT_LOCKFUNC, +[](CURL*, curl_lock_data data, curl_lock_access, void*) { share_locks[data].lock(); });
+    curl_share_setopt(made, CURLSHOPT_UNLOCKFUNC, +[](CURL*, curl_lock_data data, void*) { share_locks[data].unlock(); });
+    curl_share_setopt(made, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+    curl_share_setopt(made, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+    curl_share_setopt(made, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+    return made;
+  }();
+  return pool;
 }
 
 // The value of `name` (lower case) among the request's headers, empty when it has none.
@@ -223,7 +250,8 @@ void serve_control(Connection& connection, const std::string& method, const std:
     std::string body;
     for (const auto& item : stats())
       body += item.token + " " + std::to_string(item.total) + " " + std::to_string(item.delivered) + " " +
-              std::to_string(item.requests) + " " + std::to_string(item.idle_ms) + "\n";
+              std::to_string(item.requests) + " " + std::to_string(item.idle_ms) + " " + std::to_string(item.gets) + " " +
+              std::to_string(item.asked) + "\n";
     reply_text(fd, 200, "OK", body);
     return;
   }
@@ -263,20 +291,22 @@ void serve_control(Connection& connection, const std::string& method, const std:
   reply_text(fd, 200, "OK", "token=" + out.token + "\nurl=" + out.url + "\nlocal=" + out.local_url + "\nport=" + std::to_string(out.port) + "\n");
 }
 
-void serve_connection(Connection& connection) {
-  name_thread("pkg-proxy");
+// One request on the connection; true when it can take the next one.
+bool serve_request(Connection& connection, std::string& pending, CURL*& curl, bool first) {
   const int fd = connection.fd;
   std::string request;
-  if (!read_request(fd, request)) return;
+  // The console opens a connection to ask at once; one it keeps open may stay quiet between ranges.
+  if (!read_request(fd, pending, request, first ? 10000 : 30000)) return false;
   const auto line_end = request.find("\r\n");
   const auto first_space = request.find(' ');
   const auto second_space = first_space == std::string::npos ? std::string::npos : request.find(' ', first_space + 1);
-  if (second_space == std::string::npos || second_space > line_end) { reply(fd, 400, "Bad Request"); return; }
+  if (second_space == std::string::npos || second_space > line_end) { reply(fd, 400, "Bad Request"); return false; }
   const std::string method = request.substr(0, first_space);
   const std::string path = request.substr(first_space + 1, second_space - first_space - 1);
   if (!control.empty() && !path.compare(0, 10 + control.size(), "/control/" + control + "/")) {
-    serve_control(connection, method, path.substr(10 + control.size()), request);
-    return;
+    // A command's body may already sit in what the connection read after its headers.
+    serve_control(connection, method, path.substr(10 + control.size()), request + pending);
+    return false;
   }
   // "/<token>/<file>.pkg"
   const auto slash = path.find('/', 1);
@@ -287,37 +317,44 @@ void serve_connection(Connection& connection) {
     const auto found = links.find(token);
     if (found != links.end()) link = found->second;
   }
-  if (!link) { reply(fd, 404, "Not Found"); return; }
+  if (!link) { reply(fd, 404, "Not Found"); return false; }
   const unsigned seen = ++link->requests;
   link->last = ticks();
   touched = ticks();
   const std::string range = header(request, "range");
+  std::string wants = header(request, "connection");
+  for (auto& c : wants) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  const bool keep = wants != "close";
   // The token is the link's only secret: its first eight characters are enough to tell links apart.
   const std::string name = token.substr(0, 8);
   if (seen <= kLoggedRequests) log(name + " request " + std::to_string(seen) + ": " + method + (range.empty() ? "" : " " + range));
-  if (method != "GET" && method != "HEAD") { reply(fd, 405, "Method Not Allowed"); return; }
+  if (method != "GET" && method != "HEAD") { reply(fd, 405, "Method Not Allowed"); return false; }
 
-  std::uint64_t first = 0, last = link->total - 1;
-  const bool ranged = !range.empty() && parse_range(range, link->total, first, last);
+  std::uint64_t first_byte = 0, last = link->total - 1;
+  const bool ranged = !range.empty() && parse_range(range, link->total, first_byte, last);
   if (!range.empty() && !ranged && range.find(',') == std::string::npos && range.find("=-") == std::string::npos) {
     char extra[80];
     std::snprintf(extra, sizeof extra, "Content-Range: bytes */%llu\r\n", static_cast<unsigned long long>(link->total));
     reply(fd, 416, "Range Not Satisfiable", extra);
-    return;
+    return false;
   }
-  char head[500];
+  const char* connection_header = keep ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
+  char head[560];
   const int head_size = ranged
-    ? std::snprintf(head, sizeof head, "HTTP/1.1 206 Partial Content\r\nContent-Type: application/pkg\r\n%s"
-                    "Content-Range: bytes %llu-%llu/%llu\r\nContent-Length: %llu\r\n\r\n", kCommon,
-                    static_cast<unsigned long long>(first), static_cast<unsigned long long>(last),
-                    static_cast<unsigned long long>(link->total), static_cast<unsigned long long>(last - first + 1))
-    : std::snprintf(head, sizeof head, "HTTP/1.1 200 OK\r\nContent-Type: application/pkg\r\n%sContent-Length: %llu\r\n\r\n",
-                    kCommon, static_cast<unsigned long long>(link->total));
+    ? std::snprintf(head, sizeof head, "HTTP/1.1 206 Partial Content\r\nContent-Type: application/pkg\r\n%s%s"
+                    "Content-Range: bytes %llu-%llu/%llu\r\nContent-Length: %llu\r\n\r\n", kCommon, connection_header,
+                    static_cast<unsigned long long>(first_byte), static_cast<unsigned long long>(last),
+                    static_cast<unsigned long long>(link->total), static_cast<unsigned long long>(last - first_byte + 1))
+    : std::snprintf(head, sizeof head, "HTTP/1.1 200 OK\r\nContent-Type: application/pkg\r\n%s%sContent-Length: %llu\r\n\r\n",
+                    kCommon, connection_header, static_cast<unsigned long long>(link->total));
   // The HEAD the origin would refuse is answered here, from the size the app read with a GET.
-  if (method == "HEAD") { send_all(fd, head, static_cast<std::size_t>(head_size)); return; }
+  if (method == "HEAD") return send_all(fd, head, static_cast<std::size_t>(head_size)) && keep;
 
-  CURL* curl = curl_easy_init();
-  if (!curl) { reply(fd, 503, "Service Unavailable", "Retry-After: 1\r\n"); return; }
+  ++link->gets;
+  link->asked += last - first_byte + 1;
+  if (curl) curl_easy_reset(curl);
+  else curl = curl_easy_init();
+  if (!curl) { reply(fd, 503, "Service Unavailable", "Retry-After: 1\r\n"); return false; }
   Forward forward;
   forward.fd = fd;
   forward.curl = curl;
@@ -325,8 +362,9 @@ void serve_connection(Connection& connection) {
   forward.head.assign(head, static_cast<std::size_t>(head_size));
   forward.ranged = ranged;
   char span[64];
-  std::snprintf(span, sizeof span, "%llu-%llu", static_cast<unsigned long long>(first), static_cast<unsigned long long>(last));
+  std::snprintf(span, sizeof span, "%llu-%llu", static_cast<unsigned long long>(first_byte), static_cast<unsigned long long>(last));
   bool ok = network::configure_transport(curl, link->url, true);
+  if (CURLSH* pool = origin_pool()) ok = ok && curl_easy_setopt(curl, CURLOPT_SHARE, pool) == CURLE_OK;
   ok = ok && curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, forward_body) == CURLE_OK;
   ok = ok && curl_easy_setopt(curl, CURLOPT_WRITEDATA, &forward) == CURLE_OK;
   // Asked as a range even for the whole file: an origin that answers 200 to it is caught above.
@@ -335,10 +373,10 @@ void serve_connection(Connection& connection) {
   ok = ok && curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) == CURLE_OK;
   ok = ok && curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, +[](void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int { return stopping ? 1 : 0; }) == CURLE_OK;
   const CURLcode result = ok ? curl_easy_perform(curl) : CURLE_FAILED_INIT;
-  curl_easy_cleanup(curl);
   if (forward.started) {
     if (result != CURLE_OK && !stopping && seen <= kLoggedRequests) log(name + " request " + std::to_string(seen) + " ended early: " + curl_easy_strerror(result));
-    return;
+    // A range cut short leaves the console short of its Content-Length: only a whole one keeps it open.
+    return result == CURLE_OK && keep;
   }
   // Nothing went to the console yet: it hears what the origin said, so its own error names it. An
   // expired signed link answers 403 here, which app.log says in so many words.
@@ -347,10 +385,19 @@ void serve_connection(Connection& connection) {
     if (forward.status == 403) reply(fd, 403, "Forbidden");
     else if (forward.status == 404 || forward.status == 410) reply(fd, 404, "Not Found");
     else reply(fd, 502, "Bad Gateway");
-    return;
+    return false;
   }
   log(name + " request " + std::to_string(seen) + " failed: " + curl_easy_strerror(result));
   reply(fd, 502, "Bad Gateway");
+  return false;
+}
+
+void serve_connection(Connection& connection) {
+  name_thread("pkg-proxy");
+  std::string pending;
+  CURL* curl = nullptr;
+  for (bool first = true; !stopping && serve_request(connection, pending, curl, first); first = false) {}
+  if (curl) curl_easy_cleanup(curl);
 }
 
 // Joins the connections that have finished; the caller holds `mutex`.
@@ -512,6 +559,8 @@ std::vector<Stats> stats() {
     item.total = link->total;
     item.delivered = link->delivered;
     item.requests = link->requests;
+    item.gets = link->gets;
+    item.asked = link->asked;
     item.idle_ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::duration(now - link->last)).count());
     out.push_back(std::move(item));
   }

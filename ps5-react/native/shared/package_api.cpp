@@ -101,6 +101,8 @@ JSValue proxy_stats(JSContext* ctx, JSValueConst, int, JSValueConst*) {
     JS_SetPropertyStr(ctx, entry, "delivered", JS_NewFloat64(ctx, static_cast<double>(item.delivered)));
     JS_SetPropertyStr(ctx, entry, "requests", JS_NewUint32(ctx, item.requests));
     JS_SetPropertyStr(ctx, entry, "idleMs", JS_NewFloat64(ctx, static_cast<double>(item.idle_ms)));
+    JS_SetPropertyStr(ctx, entry, "gets", JS_NewFloat64(ctx, static_cast<double>(item.gets)));
+    JS_SetPropertyStr(ctx, entry, "asked", JS_NewFloat64(ctx, static_cast<double>(item.asked)));
     JS_SetPropertyUint32(ctx, out, index++, entry);
   }
   return out;
