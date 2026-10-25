@@ -1,7 +1,8 @@
-// Where a PKG downloads, asked before it starts: in the background on the PS5, where its own Downloads
-// fetch it and the console is free while it does (Overdrive can close), or in Overdrive as before,
-// with pause, resume and the install at the end. "Remember" answers it for every PKG from then on;
-// Settings can change that answer again (pkg-mode.js).
+// Where a PKG downloads, asked before it starts: in Overdrive as before, with pause, resume and the
+// install at the end, or in the background on the PS5, where its own Downloads fetch it and the
+// console is free while it does (Overdrive can close). Overdrive comes first and wears the "faster"
+// badge: sixteen connections beat the console's own queue. "Remember" answers it for every PKG from
+// then on; Settings can change that answer again (pkg-mode.js).
 
 import '../assets/Inter-Regular.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -49,7 +50,7 @@ import { FocusScope, Text, View } from '@ps5-react/core';
     const { focusLater } = useNavActions();
     // As the tips dialog: a focus move still pending from the page would land under this one.
     (0, useEffect)(() => {
-      focusLater("stream:console");
+      focusLater("stream:here");
     }, []);
     const pick = (mode) => {
       if (remember) setPkgMode(mode === "here" ? "overdrive" : "console");
@@ -73,8 +74,8 @@ import { FocusScope, Text, View } from '@ps5-react/core';
           ] })
         ] }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 24 }, children: [
-          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:console", mark: "console", title: t2("stream.console.title"), body: t2("stream.console.body"), badge: t2("stream.recommended"), onPress: () => pick("console") }),
-          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:here", mark: "here", title: t2("stream.here.title"), body: t2("stream.here.body"), onPress: () => pick("here") })
+          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:here", mark: "here", title: t2("stream.here.title"), body: t2("stream.here.body"), badge: t2("stream.faster"), onPress: () => pick("here") }),
+          /* @__PURE__ */ (0, jsx)(Option, { focusKey: "stream:console", mark: "console", title: t2("stream.console.title"), body: t2("stream.console.body"), onPress: () => pick("console") })
         ] }),
         /* @__PURE__ */ (0, jsxs)(View, {
           focusKey: "stream:remember",

@@ -127,7 +127,7 @@ import { LEVELS } from './haptics.js';
       key: `mode:${mode}`, value: mode, mark: mode,
       label: t2(`settings.pkgMode.${mode}`),
       detail: t2(MODE_DETAIL[mode]),
-      tag: mode === "console" ? t2("settings.recommended") : ""
+      tag: mode === "overdrive" ? t2("settings.faster") : ""
     }));
     if (id === "cleanup") return [
       { key: "on", label: t2("settings.on"), value: true },

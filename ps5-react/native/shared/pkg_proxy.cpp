@@ -6,15 +6,19 @@
 #include "thread_name.hpp"
 #include "worker_thread.hpp"
 #include <arpa/inet.h>
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <curl/curl.h>
+#include <exception>
 #include <list>
 #include <map>
 #include <memory>
@@ -22,7 +26,9 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 #ifdef __APPLE__
 #include <stdlib.h>
 #else
@@ -47,11 +53,22 @@ constexpr unsigned kLoggedRequests = 6;
 
 struct Link {
   std::string url;
+  std::string tag;  // the first eight characters of the token, for the log
   std::uint64_t total = 0;
   std::atomic<std::uint64_t> delivered{0};
   std::atomic<unsigned> requests{0};
   std::atomic<std::uint64_t> gets{0}, asked{0};  // GET requests and the bytes they asked for
   std::atomic<std::int64_t> last{0};  // Clock ticks of the last request
+  // Read-ahead (see the ring below); everything here is reachable only through `ring_mutex`.
+  std::mutex ring_mutex;
+  std::condition_variable ring_cv;
+  std::vector<char> ring;
+  std::uint64_t base = 0;    // the file offset ring[0] is
+  std::uint64_t have = 0;    // bytes valid from base, contiguous
+  std::uint64_t filled = 0;  // bytes from base claimed by chunks, always >= have
+  unsigned generation = 0;   // bumped when the window starts again: older chunks are dropped
+  bool filling = false;      // a ring thread is running
+  bool broken = false;       // a chunk failed: every request goes to the origin from now on
 };
 struct Connection {
   int fd = -1;
@@ -172,6 +189,221 @@ bool parse_range(const std::string& value, std::uint64_t total, std::uint64_t& f
   return first <= last;
 }
 
+// ---- Read-ahead ------------------------------------------------------------
+// The console's queue asks ~5 MiB ranges one after another on a single connection, so a
+// pass-through carries one origin stream: the console crawled at 1.4 MB/s where the app's own
+// sixteen connections reach 11 MB/s (2026-10-25). A range is now fetched ahead by several origin
+// connections into a fixed ring and handed over only once it is whole, so its Content-Length can
+// never be short. Anything that goes wrong — no memory, a range too wide for the ring, an origin
+// error, a wait that runs too long — falls back to the pass-through below, which is what the
+// console had before.
+constexpr std::size_t kRingBytes = 32u << 20;  // the window, whatever the package's size
+constexpr std::size_t kChunkBytes = 2u << 20;  // one origin request
+constexpr unsigned kChunkJobs = 8;             // origin connections filling the ring
+constexpr unsigned kChunkQuiet = 2;            // ... while the console has gone quiet
+constexpr std::int64_t kQuietMs = 5000;        // silence that means a slow console, not a gap
+constexpr int kRingWaitMs = 20000;             // a range not whole in this long is passed through
+constexpr std::int64_t kRingIdleMs = 60000;    // the ring is freed after this much silence
+
+struct RingJob {
+  CURL* easy = nullptr;
+  Link* link = nullptr;
+  std::uint64_t file_offset = 0;    // where in the file this chunk starts
+  std::size_t length = 0, got = 0;  // `got` is written under the link's ring_mutex
+  unsigned generation = 0;          // the window it was asked for
+  bool done = false;
+};
+
+// Writes one origin chunk into the ring at the place the window puts it now: a slide moves the ring
+// under a running chunk without touching what the chunk asked the origin for.
+std::size_t ring_body(char* data, std::size_t size, std::size_t count, void* user) {
+  auto& job = *static_cast<RingJob*>(user);
+  Link& link = *job.link;
+  const std::size_t length = size * count;
+  std::lock_guard lock(link.ring_mutex);
+  if (job.generation != link.generation || job.got + length > job.length) return 0;
+  const std::int64_t at = static_cast<std::int64_t>(job.file_offset + job.got) - static_cast<std::int64_t>(link.base);
+  if (at < 0 || static_cast<std::size_t>(at) + length > link.ring.size()) return 0;
+  std::memcpy(link.ring.data() + at, data, length);
+  job.got += length;
+  return length;
+}
+
+void drop_jobs(CURLM* multi, std::deque<std::unique_ptr<RingJob>>& jobs) {
+  for (auto& job : jobs) {
+    if (!job->easy) continue;
+    curl_multi_remove_handle(multi, job->easy);
+    curl_easy_cleanup(job->easy);
+    job->easy = nullptr;
+  }
+  jobs.clear();
+}
+
+// Fills the ring in `kChunkJobs` origin connections until it is full, sleeps between slides, and
+// frees the ring once the console has been quiet long enough. One `have` advances only across whole
+// chunks, so what the ring calls valid is always what the origin really sent.
+void ring_loop(std::shared_ptr<Link> link) {
+  name_thread("pkg-ring");
+  CURLM* multi = curl_multi_init();
+  std::deque<std::unique_ptr<RingJob>> jobs;
+  unsigned gen = 0;
+  while (multi && !stopping) {
+    bool idle = false;
+    {
+      std::unique_lock lock(link->ring_mutex);
+      if (gen != link->generation) { drop_jobs(multi, jobs); gen = link->generation; }
+      const auto silent = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::duration(ticks() - link->last)).count();
+      const unsigned quota = silent > kQuietMs ? kChunkQuiet : kChunkJobs;
+      while (!link->broken && jobs.size() < quota) {
+        const std::uint64_t room = kRingBytes - link->filled;
+        const std::uint64_t left = link->total > link->base + link->filled ? link->total - link->base - link->filled : 0;
+        if (!room || !left) break;
+        auto job = std::make_unique<RingJob>();
+        job->link = link.get();
+        job->file_offset = link->base + link->filled;
+        job->length = static_cast<std::size_t>(std::min({std::uint64_t(kChunkBytes), room, left}));
+        job->generation = link->generation;
+        job->easy = curl_easy_init();
+        bool ok = job->easy && network::configure_transport(job->easy, link->url, true);
+        if (CURLSH* pool = origin_pool()) ok = ok && curl_easy_setopt(job->easy, CURLOPT_SHARE, pool) == CURLE_OK;
+        char span[64];
+        std::snprintf(span, sizeof span, "%llu-%llu", static_cast<unsigned long long>(job->file_offset),
+                      static_cast<unsigned long long>(job->file_offset + job->length - 1));
+        ok = ok && curl_easy_setopt(job->easy, CURLOPT_RANGE, span) == CURLE_OK;
+        ok = ok && curl_easy_setopt(job->easy, CURLOPT_WRITEFUNCTION, ring_body) == CURLE_OK;
+        ok = ok && curl_easy_setopt(job->easy, CURLOPT_WRITEDATA, job.get()) == CURLE_OK;
+        ok = ok && curl_easy_setopt(job->easy, CURLOPT_NOPROGRESS, 0L) == CURLE_OK;
+        ok = ok && curl_easy_setopt(job->easy, CURLOPT_XFERINFOFUNCTION, +[](void*, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int { return stopping ? 1 : 0; }) == CURLE_OK;
+        if (!ok || curl_multi_add_handle(multi, job->easy) != CURLM_OK) {
+          if (job->easy) curl_easy_cleanup(job->easy);
+          link->broken = true;
+          link->ring_cv.notify_all();
+          break;
+        }
+        link->filled += job->length;
+        jobs.push_back(std::move(job));
+      }
+      if (jobs.empty()) {
+        if (link->broken || silent > kRingIdleMs) idle = true;
+        else link->ring_cv.wait_for(lock, std::chrono::milliseconds(200));
+      }
+    }
+    if (idle) break;
+    int running = 0;
+    curl_multi_perform(multi, &running);
+    int wait = 0;
+    curl_multi_wait(multi, nullptr, 0, 200, &wait);
+    int queued = 0;
+    while (CURLMsg* message = curl_multi_info_read(multi, &queued)) {
+      if (message->msg != CURLMSG_DONE) continue;
+      CURL* easy = message->easy_handle;
+      const CURLcode result = message->data.result;
+      bool failed = false;
+      {
+        std::lock_guard lock(link->ring_mutex);
+        for (auto& job : jobs) {
+          if (job->easy != easy) continue;
+          curl_multi_remove_handle(multi, easy);
+          curl_easy_cleanup(easy);
+          job->easy = nullptr;
+          // One chunk short or refused: the console is never left waiting on a range that will not
+          // be whole; from here on every request goes to the origin as before.
+          if (result != CURLE_OK || job->got != job->length) {
+            log(link->tag + " read-ahead failed (" + curl_easy_strerror(result) + "); ranges go to the origin");
+            link->broken = true;
+            failed = true;
+            break;
+          }
+          job->done = true;
+          while (!jobs.empty() && jobs.front()->done) {
+            link->have += jobs.front()->length;
+            jobs.pop_front();
+          }
+          link->ring_cv.notify_all();
+          break;
+        }
+        if (failed) { drop_jobs(multi, jobs); link->ring_cv.notify_all(); }
+      }
+    }
+  }
+  if (multi) {
+    drop_jobs(multi, jobs);
+    curl_multi_cleanup(multi);
+  }
+  std::lock_guard lock(link->ring_mutex);
+  link->ring.clear();
+  link->ring.shrink_to_fit();
+  link->base = link->have = link->filled = 0;
+  ++link->generation;
+  link->filling = false;
+  link->ring_cv.notify_all();
+}
+
+// Allocates the ring and starts its thread; the caller holds `ring_mutex`.
+bool start_ring(const std::shared_ptr<Link>& link) {
+  if (link->broken) return false;
+  if (link->ring.size() != kRingBytes) {
+    try { link->ring.assign(kRingBytes, 0); } catch (const std::exception&) { link->broken = true; return false; }
+  }
+  if (!link->filling) {
+    link->filling = true;
+    log(link->tag + " fetching ahead in " + std::to_string(kChunkJobs) + " origin connections");
+    try { std::thread(ring_loop, link).detach(); }
+    catch (const std::exception&) { link->filling = false; link->broken = true; return false; }
+  }
+  return true;
+}
+
+// 1 when the range was served from the ring, 0 when it has to go to the origin, -1 when sending it
+// failed and the connection must close.
+int serve_from_ring(const std::shared_ptr<Link>& link, int fd, const char* head, std::size_t head_size,
+                    std::uint64_t first, std::uint64_t last) {
+  const std::uint64_t length = last - first + 1;
+  if (length > kChunkBytes * 4) return 0;  // a range that wide is not what the console's queue asks
+  std::unique_lock lock(link->ring_mutex);
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    if (link->broken || !start_ring(link)) return 0;
+    if (first < link->base || first - link->base > link->have) {
+      // A jump (the queue's first probes, or a seek): the window starts again where it asked.
+      link->base = first;
+      link->have = link->filled = 0;
+      ++link->generation;
+      link->ring_cv.notify_all();
+      continue;
+    }
+    if (const std::uint64_t delta = first - link->base) {
+      // The console has read past this: drop it, so the window keeps room ahead of what it asks.
+      const std::uint64_t kept = link->have - delta;
+      std::memmove(link->ring.data(), link->ring.data() + delta, static_cast<std::size_t>(kept));
+      link->base = first;
+      link->have = kept;
+      link->filled -= delta;
+      link->ring_cv.notify_all();
+    }
+    const std::uint64_t at = first - link->base;
+    if (at + length > kRingBytes) return 0;
+    const unsigned gen = link->generation;
+    const auto deadline = Clock::now() + std::chrono::milliseconds(kRingWaitMs);
+    while (link->have < at + length) {
+      if (link->broken || link->ring.size() != kRingBytes) break;
+      if (link->generation != gen) break;
+      if (link->ring_cv.wait_until(lock, deadline) == std::cv_status::timeout) return 0;
+    }
+    if (link->broken) return 0;
+    if (link->generation != gen || link->ring.size() != kRingBytes) continue;
+    // A whole range, from memory: the answer cannot be short, and the connection stays open for the
+    // console's next range.
+    std::vector<char> body(link->ring.begin() + static_cast<std::ptrdiff_t>(at),
+                           link->ring.begin() + static_cast<std::ptrdiff_t>(at + length));
+    lock.unlock();
+    const bool sent = send_all(fd, head, head_size) && send_all(fd, body.data(), body.size());
+    if (sent) link->delivered += length;
+    link->ring_cv.notify_all();
+    return sent ? 1 : -1;
+  }
+  return 0;
+}
+
 struct Forward {
   int fd = -1;
   CURL* curl = nullptr;
@@ -227,6 +459,7 @@ bool add_locked(const Request& request, Served& out, std::string& error) {
   if (!links.count(token)) {
     auto link = std::make_shared<Link>();
     link->url = request.url;
+    link->tag = token.substr(0, 8);
     link->total = request.total;
     link->last = ticks();
     links[token] = link;
@@ -352,6 +585,13 @@ bool serve_request(Connection& connection, std::string& pending, CURL*& curl, bo
 
   ++link->gets;
   link->asked += last - first_byte + 1;
+  // Ranges are fetched ahead by several origin connections and handed over whole; whatever the
+  // ring cannot serve goes to the origin exactly as before.
+  if (ranged) {
+    const int from_ring = serve_from_ring(link, fd, head, static_cast<std::size_t>(head_size), first_byte, last);
+    if (from_ring < 0) return false;
+    if (from_ring > 0) return keep;
+  }
   if (curl) curl_easy_reset(curl);
   else curl = curl_easy_init();
   if (!curl) { reply(fd, 503, "Service Unavailable", "Retry-After: 1\r\n"); return false; }
