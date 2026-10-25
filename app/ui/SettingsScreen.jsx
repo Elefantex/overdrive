@@ -1,7 +1,7 @@
 // Settings, rebuilt as the PS5's own settings are: every entry a tile that shows its value, and
 // pressing it opens that setting's page — its choices on the left, what the focused choice does on
-// the right. The order is General first, then the Downloads settings, the linked services and the
-// build's own information. Services wear the same brand marks the Downloads page draws.
+// the right. The order is General first, then the Downloads settings, then the linked services.
+// Services wear the same brand marks the Downloads page draws.
 //
 // The page's content lives in settings-data.js; this file is layout and what a press does. Back (○)
 // leaves a setting for the tiles, and leaves the tiles for the app.
@@ -10,7 +10,6 @@ import '../assets/Inter-Regular.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
-import { formatDate2 } from '../i18n/core.js';
 import { chooseLanguage, languageChoice, systemLocale, useT } from '../i18n/index.js';
 import en from '../i18n/locales/en.json';
 import { useNavActions } from '../state/nav.jsx';
@@ -20,7 +19,6 @@ import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.j
 import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
 import { storageRoots } from '../state/downloads.js';
 import { setPkgMode, usePkgMode } from '../state/pkg-mode.js';
-import { checkForUpdate } from '../state/update.js';
 import { setVibrationLevel, useVibrationLevel } from './haptics.js';
 import { GROUPS, ITEMS, currentOf, optionsOf, selectedIndex, sideOf, valueOf } from './settings-data.js';
 import { Button2 } from './Button.jsx';
@@ -33,8 +31,6 @@ import { colors } from './colors.js';
 import { formatBytes } from '../state/size.js';
 import { URLDialog } from '../downloads/URLDialog.jsx';
 import { PhoneSetup } from '../downloads/PhoneSetup.jsx';
-import { VERSION } from '../version.js';
-import { BUILD } from '../build.js';
 import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
   // The screen is 1920 wide and the tiles sit inside two 96 px margins, each row inset 14 more: two
@@ -46,39 +42,7 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
   var HOME_HINTS = [HINT.select, HINT.back];
   var PAGE_HINTS = [HINT.select, HINT.back];
 
-  // The notices the build copies into the app (ps5-react's tools/build_ps5.py). Listing a mounted
-  // image's folder can come back empty on the console, so these stand in and are checked one by one.
-  var NOTICES = [
-    "ArtCNN-LICENSE", "Anime4K-LICENSE", "QuickJS-LICENSE", "SheenBidi-LICENSE", "embedded-react-LICENSE",
-    "embedded-react-engine-LICENSE", "harfbuzz-COPYING", "Inter-LICENSE", "Lapy-MIT.txt", "Noto-fonts-LICENSE.txt",
-    "SOURCES.md", "cacert-MPL-2.0.txt", "filesystem-helper-client-LICENSE", "material-sounds-NOTICE.txt",
-    "networking-compat-LICENSE", "ps5-homebrew-ui-LICENSE", "ps5-opengl-LICENSE", "ps5-opengl-NOTICES.md",
-    "ps5-react-LICENSE", "ps5-react-LICENSE-ATTRIBUTION", "ps5-react-NOTICE", "stb_image-LICENSE",
-    "unRAR-license.txt", "ffmpeg-LICENSE.md", "ffmpeg-COPYING.LGPLv3", "video-decoder-NOTICE.txt", "audio-passthrough-NOTICE.txt"
-  ];
   var TITLES = /* @__PURE__ */ new Map();
-
-  function noticeDir() {
-    return `${FileSystem.appDir}/notices`;
-  }
-
-  // What the Licenses page lists: the notices folder when it can be read, the build's own names
-  // checked one by one when it cannot.
-  function noticeNames() {
-    try {
-      const listed = FileSystem.readDir(noticeDir()).filter((entry) => entry.isFile).map((entry) => entry.name);
-      if (listed.length) return listed.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
-    } catch (error) {
-      console.log(`[settings] notices not listed: ${error.message}`);
-    }
-    return NOTICES.filter((name) => {
-      try {
-        return FileSystem.exists(`${noticeDir()}/${name}`);
-      } catch {
-        return false;
-      }
-    });
-  }
 
   // A language's own word for "Settings", for the sample on its page: read once per language.
   function titleIn(code) {
@@ -185,9 +149,10 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
           row.detail ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 20, color: colors.muted, lineHeight: 28 }, children: row.detail }) : null
         ] }),
         row.tag ? /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: 999, backgroundColor: colors.ok, paddingVertical: 5, paddingHorizontal: 14 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 17, fontWeight: 600, color: colors.accentFg }, children: row.tag }) }) : null,
-        row.mark ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 92, height: 64, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: row.mark === "console"
+        // The marks sit on the row itself, with no box behind them.
+        row.mark ? /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", alignItems: "center", gap: 10 }, children: row.mark === "console"
           ? /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 1.5 })
-          : row.mark === "overdrive" ? /* @__PURE__ */ (0, jsx)(LogoMark, { size: 36 }) : /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
+          : row.mark === "overdrive" ? /* @__PURE__ */ (0, jsx)(LogoMark, { size: 36 }) : /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
             /* @__PURE__ */ (0, jsx)(PlatformBadge, { platforms: ["ps5"], scale: 1.05 }),
             /* @__PURE__ */ (0, jsx)(LogoMark, { size: 24 })
           ] }) }) : null,
@@ -200,7 +165,9 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
   function Preview({ level }) {
     const lit = Math.round(level / 25);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { alignItems: "center", gap: 20, paddingVertical: 8 }, children: [
-      /* @__PURE__ */ (0, jsx)(View, { style: { width: 200, height: 200, borderRadius: 56, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: "controller", size: 96, color: colors.fg }) }),
+      // The pad's own mark sits a little high in its square: the glyph's drawing leans below the
+      // centre of its box, so a margin under it is what puts it in the middle to the eye.
+      /* @__PURE__ */ (0, jsx)(View, { style: { width: 200, height: 200, borderRadius: 56, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(View, { style: { marginBottom: 16 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: "controller", size: 96, color: colors.fg }) }) }),
       /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 10 }, children: [0, 1, 2, 3].map((step) => /* @__PURE__ */ (0, jsx)(View, { style: { width: 44, height: 6, borderRadius: 3, backgroundColor: step < lit ? colors.fg : colors.surface3 } }, String(step))) })
     ] });
   }
@@ -210,7 +177,7 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
   // the 980 left column and the 72 between them, so its lines know where to wrap.
   var SIDE_W = 1920 - PAGE_PAD * 2 - 980 - 72;
   function Side({ data, t2 }) {
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { width: SIDE_W, alignSelf: "flex-start", borderRadius: 26, backgroundColor: colors.surface, paddingVertical: 44, paddingHorizontal: 48, gap: 26 }, children: [
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { width: SIDE_W, borderRadius: 26, backgroundColor: colors.surface, paddingVertical: 44, paddingHorizontal: 48, gap: 26 }, children: [
       data.eyebrow ? /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 18, fontWeight: 600, letterSpacing: 2.4, color: colors.subtle }, children: data.eyebrow }) : null,
       data.sample ? /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 60, fontWeight: 600, color: colors.fg, letterSpacing: -1.4, writingDirection: data.rtl ? "rtl" : "ltr", textAlign: data.rtl ? "right" : "left" }, children: data.sample.title }),
@@ -242,23 +209,17 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
     ] });
   }
 
+  // A setting's page: its name and what it is, the choices under it, and what the focused choice
+  // does beside them. The block is short or tall as its choices are, and the page centres it: the
+  // list stops at a screenful and scrolls past that (a language list is longer than the screen).
+  var LIST_MAX_H = 620;
   function Detail({ id, ctx, t2, onPick }) {
     const [focused, setFocused] = useState(() => selectedIndex(id, ctx, t2));
     const rows = optionsOf(id, ctx, t2);
     const row = rows[Math.min(focused, rows.length - 1)];
     const current = currentOf(id, ctx.values);
     const item = ITEMS[id];
-    const group = GROUPS.find((entry) => entry.items.includes(id));
-    const crumb = { fontFamily: "Inter-Regular", fontSize: 22, fontWeight: 500, color: colors.subtle };
-    return /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, paddingTop: 34, paddingHorizontal: PAGE_PAD }, children: [
-      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 10, height: 60 }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: crumb, children: t2("settings.title") }),
-        /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", size: 20, color: colors.subtle }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: crumb, children: t2(group.title) }),
-        /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", size: 20, color: colors.subtle }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: [crumb, { color: colors.fg }], children: t2(item.title) })
-      ] }),
-      /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, flexDirection: "row", gap: 72, marginTop: 24 }, children: [
+    return /* @__PURE__ */ (0, jsx)(View, { style: { flex: 1, justifyContent: "center", paddingHorizontal: PAGE_PAD, paddingVertical: 30 }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 72 }, children: [
         /* @__PURE__ */ (0, jsxs)(View, { style: { width: 980 }, children: [
           item.brand
             // A service's page opens with its own mark beside its name, as its tile draws it.
@@ -268,18 +229,15 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
             ] })
             : /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 46, fontWeight: 600, color: colors.fg, letterSpacing: -1.2, lineHeight: 58 }, children: t2(item.title) }),
           /* @__PURE__ */ (0, jsx)(Text, { style: { width: 800, marginTop: 4, marginBottom: 18, fontFamily: "Inter-Regular", fontSize: 24, color: colors.muted, lineHeight: 35 }, children: t2(item.lead) }),
-          /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1, marginBottom: 24 }, children: /* @__PURE__ */ (0, jsx)(View, { style: { gap: 12, padding: 10, paddingBottom: 90 }, children: rows.length
-            ? rows.map((entry, index) => /* @__PURE__ */ (0, jsx)(Option, {
-              id, index, row: entry, t2,
-              selected: entry.value !== void 0 && entry.value === current,
-              onFocus: () => setFocused(index),
-              onPress: () => onPick(id, entry, index)
-            }, entry.key))
-            : /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.licensesEmpty") }) }) }),
+          /* @__PURE__ */ (0, jsx)(ScrollView, { style: { maxHeight: LIST_MAX_H }, children: /* @__PURE__ */ (0, jsx)(View, { style: { gap: 12, padding: 10, paddingBottom: 12 }, children: rows.map((entry, index) => /* @__PURE__ */ (0, jsx)(Option, {
+            id, index, row: entry, t2,
+            selected: entry.value !== void 0 && entry.value === current,
+            onFocus: () => setFocused(index),
+            onPress: () => onPick(id, entry, index)
+          }, entry.key)) }) })
         ] }),
         /* @__PURE__ */ (0, jsx)(Side, { data: sideOf(id, ctx, row, t2), t2 })
-      ] })
-    ] });
+      ] }) });
   }
 
   function UnlinkDialog({ service, t2, onConfirm, onCancel }) {
@@ -298,42 +256,14 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
     });
   }
 
-  // A notice reads over the page, in the app's monospace face, scrolling on the D-pad.
-  function NoticeView({ notice, t2, onClose }) {
-    return /* @__PURE__ */ (0, jsx)(FocusScope, {
-      trap: true, autoFocus: true,
-      onBack: () => { onClose(); return true; },
-      onAction: () => true,
-      children: /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 50, alignItems: "center", justifyContent: "center", backgroundColor: "#000000f2" }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: 1560, height: 800, gap: 22, padding: 44, borderRadius: 18, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.surface }, children: [
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 30, fontWeight: 600, color: colors.fg }, children: notice.name }),
-        /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "JetBrainsMono-Regular", fontSize: 19, color: colors.muted, lineHeight: 28 }, children: notice.text }) }),
-        /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row" }, children: /* @__PURE__ */ (0, jsx)(Button2, { label: t2("add.close"), autoFocus: true, onPress: onClose }) })
-      ] }) })
-    });
-  }
-
   function SettingsScreen({ onBack }) {
     const t2 = useT();
     const values = useSettingsValues();
     const { focusLater } = useNavActions();
     const [page, setPage] = useState(null);
     const [dialog, setDialog] = useState(null);
-    const [notice, setNotice] = useState(null);
-    const [check, setCheck] = useState({ phase: "idle" });
-    const [names] = useState(noticeNames);
     useHints(page ? PAGE_HINTS : HOME_HINTS);
-    let built = "";
-    if (BUILD.built) {
-      try {
-        built = formatDate2(BUILD.built);
-      } catch {
-        built = BUILD.built;
-      }
-    }
-    const ctx = {
-      values, drives: values.drives, system: systemLocale(), version: VERSION, commit: BUILD.commit,
-      built, check, notices: names, titleIn
-    };
+    const ctx = { values, drives: values.drives, system: systemLocale(), titleIn };
     const optionKey = (id, index) => `settings:option:${id}:${index}`;
     const open = (id) => {
       setPage(id);
@@ -348,18 +278,6 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
       focusLater(optionKey(page, index));
     };
     const fieldIndex = (field) => optionsOf(page, ctx, t2).findIndex((entry) => entry.field === field);
-    const runCheck = () => {
-      setCheck({ phase: "checking" });
-      void (async () => {
-        try {
-          const found = await checkForUpdate();
-          setCheck(found ? { phase: "newer", version: found.version } : { phase: "current" });
-        } catch (error) {
-          console.log(`[settings] update check: ${error.message}`);
-          setCheck({ phase: "failed" });
-        }
-      })();
-    };
     const pick = (id, row, index) => {
       if (row.value !== void 0) {
         if (id === "vibration") setVibrationLevel(row.value);
@@ -370,33 +288,29 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
         else if (id === "cleanup") setDeletePackages(row.value);
         return;
       }
-      if (row.notice) {
-        let text = "";
-        try {
-          text = FileSystem.readFile(`${noticeDir()}/${row.notice}`);
-        } catch (error) {
-          text = `${t2("settings.licensesEmpty")}\n\n${error.message}`;
-        }
-        setNotice({ name: row.notice, text, index });
-        return;
-      }
-      if (row.action === "restart") return runCheck();
       if (row.phone) return setDialog({ type: "phone", service: row.phone, index });
       if (row.unlink) return setDialog({ type: "unlink", service: row.unlink, index });
       if (row.field) return setDialog({ type: "field", field: row.field, service: page, value: row.initial || "", index });
     };
     return /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1 }, children: [
-      /* @__PURE__ */ (0, jsx)(FocusScope, {
-        autoFocus: true,
+      // The tiles stay mounted under a setting's page, hidden and out of navigation: Back finds them
+      // as they were left, at the scroll the player had, instead of a fresh grid at the top.
+      /* @__PURE__ */ (0, jsx)(View, { style: page ? { flex: 1, display: "none" } : { flex: 1 }, children: /* @__PURE__ */ (0, jsx)(FocusScope, {
+        focusKey: "settings:home", autoFocus: true, inert: page !== null,
         onBack: () => {
-          if (page) { closePage(); return true; }
           onBack();
           return true;
         },
-        children: page
-          ? /* @__PURE__ */ (0, jsx)(Detail, { id: page, ctx, t2, onPick: pick })
-          : /* @__PURE__ */ (0, jsx)(Home, { ctx, t2, onOpen: open })
-      }),
+        children: /* @__PURE__ */ (0, jsx)(Home, { ctx, t2, onOpen: open })
+      }) }),
+      page ? /* @__PURE__ */ (0, jsx)(FocusScope, {
+        focusKey: `settings:page:${page}`, autoFocus: true, trap: true,
+        onBack: () => {
+          closePage();
+          return true;
+        },
+        children: /* @__PURE__ */ (0, jsx)(Detail, { id: page, ctx, t2, onPick: pick })
+      }) : null,
       dialog && dialog.type === "phone" ? /* @__PURE__ */ (0, jsx)(PhoneSetup, {
         service: dialog.service,
         onField: (field) => setDialog({ type: "field", field, service: dialog.service, value: values.services[field] || "", index: Math.max(0, fieldIndex(field)) }),
@@ -419,14 +333,6 @@ import { FileSystem, FocusScope, ScrollView, Text, View, useIsFocused } from '@p
           closeDialog(Math.max(0, dialog.index - 1));
         },
         onCancel: () => closeDialog(dialog.index)
-      }) : null,
-      notice ? /* @__PURE__ */ (0, jsx)(NoticeView, {
-        notice,
-        t2,
-        onClose: () => {
-          setNotice(null);
-          focusLater(optionKey(page, notice.index));
-        }
       }) : null
     ] });
   }

@@ -1,10 +1,10 @@
-// The new Settings page's content, kept apart from its layout: four groups of tiles, each tile's
+// The new Settings page's content, kept apart from its layout: three groups of tiles, each tile's
 // current value, the choices its own page lists and the panel that says what the focused choice
 // does. Keys are i18n keys and everything else is plain data, so SettingsScreen.jsx stays markup.
 //
-// The groups are the PS5's order: General first, then what Downloads does, the services a link or a
-// magnet can be handed to, and what this build is. "Disk for downloads" shows only when there is
-// more than one drive, as before (issue #103).
+// The groups are the PS5's order: General first, then what Downloads does, then the services a link
+// or a magnet can be handed to. "Disk for downloads" shows only when there is more than one drive,
+// as before (issue #103).
 
 import { formatPercent2 } from '../i18n/core.js';
 import { LOCALES, isRTL } from '../i18n/locales.js';
@@ -17,8 +17,7 @@ import { LEVELS } from './haptics.js';
   var GROUPS = [
     { key: "general", title: "settings.group.general", items: ["vibration", "language"] },
     { key: "downloads", title: "settings.group.downloads", items: ["speed", "disk", "pkg", "cleanup"] },
-    { key: "services", title: "settings.group.services", items: ["torbox", "realdebrid", "premiumize", "qbittorrent"] },
-    { key: "about", title: "settings.group.about", items: ["version", "licenses"] }
+    { key: "services", title: "settings.group.services", items: ["torbox", "realdebrid", "premiumize", "qbittorrent"] }
   ];
 
   // `brand` draws the service's own logo, the same mark the Downloads page puts on its cards.
@@ -32,9 +31,7 @@ import { LEVELS } from './haptics.js';
     torbox: { brand: "torbox", title: "add.torboxName", lead: "settings.torboxLead" },
     realdebrid: { brand: "realdebrid", title: "add.realdebridName", lead: "settings.realdebridLead" },
     premiumize: { brand: "premiumize", title: "add.premiumizeName", lead: "settings.premiumizeLead" },
-    qbittorrent: { brand: "qbittorrent", title: "add.qbittorrentName", lead: "settings.qbittorrentLead" },
-    version: { icon: "info", title: "settings.version", lead: "settings.versionLead" },
-    licenses: { icon: "file", title: "settings.licenses", lead: "settings.licensesLead" }
+    qbittorrent: { brand: "qbittorrent", title: "add.qbittorrentName", lead: "settings.qbittorrentLead" }
   };
 
   // The services a page opens, and the two whose account is linked from the phone with a QR code
@@ -84,13 +81,11 @@ import { LEVELS } from './haptics.js';
       const key = values.services[id];
       return key ? mask(key) : t2("add.serviceNeeds");
     }
-    if (id === "version") return `v${ctx.version}${ctx.commit && ctx.commit !== "dev" ? ` · ${ctx.commit}` : ""}`;
-    if (id === "licenses") return t2("settings.licensesValue");
     return "";
   }
 
   // A row is a choice when it has `value` (the radio fills in), or an action when it has `action`
-  // (the icon its square carries): a phone login, a field to type, an unlink, the update check.
+  // (the icon its square carries): a phone login, a field to type, an unlink.
   function serviceRows(service, values, t2) {
     if (service === "qbittorrent") {
       const { address, user, password } = values.services;
@@ -138,8 +133,6 @@ import { LEVELS } from './haptics.js';
       { key: "on", label: t2("settings.on"), value: true },
       { key: "off", label: t2("settings.off"), detail: t2("settings.cleanupOffDetail"), value: false }
     ];
-    if (id === "version") return [{ key: "check", action: "restart", label: t2(ctx.check.phase === "checking" ? "settings.versionChecking" : "settings.versionCheck") }];
-    if (id === "licenses") return ctx.notices.map((name) => ({ key: name, action: "file", label: name.replace(/\.[a-z0-9]+$/i, ""), notice: name }));
     if (SERVICES.includes(id)) return serviceRows(id, values, t2);
     return [];
   }
@@ -157,15 +150,6 @@ import { LEVELS } from './haptics.js';
     const minutes = Math.round(50e9 / (limit * 1048576) / 60);
     if (minutes < 60) return t2("settings.minutes", { n: minutes });
     return t2("settings.hoursMinutes", { h: Math.floor(minutes / 60), m: String(minutes % 60).padStart(2, "0") });
-  }
-
-  function versionStatus(ctx, t2) {
-    const check = ctx.check;
-    if (check.phase === "checking") return t2("settings.versionChecking");
-    if (check.phase === "current") return t2("settings.versionUpToDate", { version: ctx.version });
-    if (check.phase === "newer") return t2("settings.versionAvailable", { version: check.version });
-    if (check.phase === "failed") return t2("settings.versionFailed");
-    return t2("settings.versionNote");
   }
 
   /**
@@ -231,13 +215,6 @@ import { LEVELS } from './haptics.js';
         small: PHONE.includes(id) ? t2("settings.servicePhone") : t2(`add.fieldBody.${id}`)
       };
     }
-    if (id === "version") return {
-      eyebrow: "Overdrive",
-      big: `v${ctx.version}`,
-      rows: [{ label: t2("settings.versionBuild"), value: ctx.commit }, { label: t2("settings.versionBuilt"), value: ctx.built }].filter((row2) => row2.value),
-      small: versionStatus(ctx, t2)
-    };
-    if (id === "licenses") return { eyebrow: t2("settings.licensesSide"), big: t2("settings.licensesValue"), small: t2("settings.licensesLead") };
     return {};
   }
 
