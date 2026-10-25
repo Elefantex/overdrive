@@ -15,7 +15,7 @@ const SIGNED_LINK = 'https://asia-upload.04b3d96d52475741e6b10f97f0a84a16.r2.clo
   '&X-Amz-Date=20261025T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=' + 'a'.repeat(64);
 
 // The console's answer to a link: 'accepted' reports bytes, 'refused' fails, 'silent' says nothing.
-function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true, lan = '192.168.1.20', saved = null, delivered = () => 0} = {}) {
+function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', platform = 'ps5', format = 'binary', redirect = false, size = 100e9, url = 'https://cdn.example/file.pkg', proxy = true, lan = '192.168.1.20', saved = null, delivered = () => 0, helper = null, streamMode} = {}) {
   const files = new Map();
   const dirs = new Set(['/data']);
   const requests = [], installs = [], enqueued = [], proxied = [], removed = [];
@@ -101,10 +101,11 @@ function harness({head = PS4_HEAD, status = 206, console: answer = 'accepted', p
     archives: {streams: true, supportsAsyncInspection: false, inspect: () => ({kind: null})},
     notifications: {show() {}}, power: {keepAwake() {}},
     sources: {resolve: async entry => ({url: entry.url})},
+    helper,
   });
   const release = {id: 'source-1', filename: format === 'binary' ? 'game.binary' : 'game.' + format,
     url: redirect ? 'https://host.example/f/abc' : url, format, provider: 'vikingfile'};
-  const id = saved ? saved.jobs[0].id : queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data');
+  const id = saved ? saved.jobs[0].id : queue.enqueue({id: 'CUSA04013', title: 'Titanfall 2'}, release, '/data', {streamMode});
   return {queue, id, requests, installs, enqueued, proxied, removed};
 }
 
@@ -356,4 +357,79 @@ test('outside the PS5 nothing is probed', async () => {
   await settled(fixture);
   assert.equal(fixture.requests.length, 0);
   assert.equal(fixture.installs.length, 0);
+});
+
+// The helper payload (pkg-helper.js) serves the package once Overdrive has closed: the console's
+// download goes on while the player uses the console for anything else.
+function fakeHelper({fails = false, running = false, delivered = () => 0} = {}) {
+  const added = [], removed = [];
+  return {
+    added, removed,
+    alive: async () => running,
+    ensure: async () => {},
+    async add(request) {
+      if (fails) throw new Error('Packages.startHelper: the payload loader on port 9021 did not answer');
+      added.push(request);
+      const token = request.token || 'e'.repeat(64);
+      return {url: `http://192.168.1.20:42000/${token}/${request.file}`, localUrl: `http://127.0.0.1:42000/${token}/${request.file}`, token, port: 42000, background: true};
+    },
+    stats: async () => added.map(request => ({token: request.token || 'e'.repeat(64), total: request.total, delivered: delivered(), requests: 4, idleMs: 0})),
+    remove: async token => { removed.push(token); },
+  };
+}
+const HELPER_LAN = 'http://192.168.1.20:42000/' + 'e'.repeat(64) + '/game.pkg';
+
+test('a refused link goes to the helper, so Overdrive can close while the console downloads it', async () => {
+  const helper = fakeHelper();
+  const fixture = harness({console: url => url.includes(':42000/') ? 'accepted' : 'refused', format: 'pkg', helper});
+  const job = await settled(fixture);
+  assert.equal(job.state, 'installed', job.error);
+  assert.equal(job.proxy.background, true);
+  assert.equal(job.message, 'downloads.streamedBackground');
+  assert.deepEqual(fixture.installs.map(item => item.url), ['https://cdn.example/file.pkg', HELPER_LAN]);
+  assert.equal(fixture.proxied.length, 0, 'the app serves nothing itself');
+  assert.deepEqual(helper.added, [{url: 'https://cdn.example/file.pkg', total: 100e9, file: 'game.pkg'}]);
+});
+
+test('a helper that does not start leaves the app serving it, which has to stay open', async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...parts) => lines.push(parts.join(' '));
+  let fixture;
+  try {
+    fixture = harness({console: url => url.startsWith('http://192.168.1.20:41000') ? 'accepted' : 'refused', format: 'pkg', helper: fakeHelper({fails: true})});
+    const job = await settled(fixture);
+    assert.equal(job.proxy.background, false);
+    assert.equal(job.message, 'downloads.streamedProxy');
+  } finally {
+    console.log = original;
+  }
+  assert.ok(lines.some(line => line.includes('the package helper did not start')), lines.join('\n'));
+});
+
+test('a download asked for in Overdrive is never handed to the console', async () => {
+  const helper = fakeHelper();
+  const fixture = harness({console: 'refused', format: 'pkg', helper, streamMode: 'here'});
+  const job = await settled(fixture);
+  assert.equal(job.streamMode, 'here');
+  assert.equal(fixture.installs.filter(item => item.url).length, 0);
+  assert.equal(fixture.enqueued.length, 1);
+  assert.equal(helper.added.length, 0);
+});
+
+test('reopened, the app finds the helper still serving and shows its progress', async () => {
+  let sent = 2e9;
+  const helper = fakeHelper({running: true, delivered: () => sent});
+  const proxy = {token: 'f'.repeat(64), port: 42000, origin: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', since: Date.now(), background: true};
+  const fixture = harness({saved: servedJob(proxy), helper});
+  for (const until = Date.now() + 2000; !helper.added.length && Date.now() < until;) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(helper.added, [{url: 'https://cdn.example/file.pkg', total: 4e9, file: 'game.pkg', token: 'f'.repeat(64)}]);
+  assert.equal(fixture.proxied.length, 0);
+  for (const until = Date.now() + 8000; Date.now() < until;) {
+    const job = fixture.queue.snapshot().find(item => item.id === fixture.id);
+    if (job.proxy.done) return;
+    if (job.message === 'downloads.helperProgress') sent = 4e9;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail('the helper progress was never shown through to the end');
 });

@@ -53,6 +53,7 @@ struct Link {
 };
 struct Connection {
   int fd = -1;
+  bool loopback = false;  // the peer is this console: only it may use the control commands
   std::atomic<bool> done{false};
   WorkerThread thread;
 };
@@ -64,6 +65,8 @@ WorkerThread acceptor;
 int listener = -1;
 std::uint16_t port = 0;
 std::atomic<bool> stopping{false};
+std::string control;  // the control commands' secret; empty in the app, where nothing else asks
+std::atomic<std::int64_t> touched{0};
 
 std::int64_t ticks() { return Clock::now().time_since_epoch().count(); }
 
@@ -82,6 +85,13 @@ bool send_all(int fd, const char* data, std::size_t size) {
 
 // Every answer carries what the console's downloader expects of a package origin.
 constexpr const char* kCommon = "Accept-Ranges: bytes\r\nCache-Control: no-store\r\nConnection: close\r\n";
+
+bool reply_text(int fd, int status, const char* reason, const std::string& body) {
+  char head[300];
+  const int size = std::snprintf(head, sizeof head, "HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: %zu\r\n\r\n",
+                                 status, reason, body.size());
+  return send_all(fd, head, static_cast<std::size_t>(size)) && send_all(fd, body.data(), body.size());
+}
 
 bool reply(int fd, int status, const char* reason, const char* extra = "") {
   char head[300];
@@ -159,6 +169,100 @@ std::size_t forward_body(char* data, std::size_t size, std::size_t count, void* 
   return size * count;
 }
 
+bool valid_token(const std::string& token);
+bool new_token(std::string& out);
+std::string lan_address();
+std::string plain(const std::string& file);
+
+// A small body after the headers (a control command's), up to 4 KiB.
+bool read_body(int fd, const std::string& request, std::string& body) {
+  const auto end = request.find("\r\n\r\n") + 4;
+  body = request.substr(end);
+  const auto length = std::strtoull(header(request, "content-length").c_str(), nullptr, 10);
+  if (length > 4096) return false;
+  char buffer[1024];
+  while (body.size() < length) {
+    pollfd ready{fd, POLLIN, 0};
+    if (poll(&ready, 1, 5000) <= 0) return false;
+    const auto count = recv(fd, buffer, sizeof buffer, 0);
+    if (count <= 0) return false;
+    body.append(buffer, static_cast<std::size_t>(count));
+  }
+  body.resize(length);
+  return true;
+}
+
+// Adds a link; the caller holds `mutex`.
+bool add_locked(const Request& request, Served& out, std::string& error) {
+  std::string token = request.token;
+  if (!valid_token(token) && !new_token(token)) { error = "no random bytes for the link's token"; return false; }
+  // A link the helper already serves (the app reopened while it ran) keeps what it has sent so far.
+  if (!links.count(token)) {
+    auto link = std::make_shared<Link>();
+    link->url = request.url;
+    link->total = request.total;
+    link->last = ticks();
+    links[token] = link;
+  }
+  touched = ticks();
+  const std::string path = ":" + std::to_string(port) + "/" + token + "/" + plain(request.file);
+  const std::string lan = lan_address();
+  out.url = lan.empty() ? std::string() : "http://" + lan + path;
+  out.local_url = "http://127.0.0.1" + path;
+  out.token = token;
+  out.port = port;
+  log(token.substr(0, 8) + " serving " + std::to_string(request.total) + " bytes at " + (lan.empty() ? "127.0.0.1 only" : lan));
+  return true;
+}
+
+void serve_control(Connection& connection, const std::string& method, const std::string& command, const std::string& request) {
+  const int fd = connection.fd;
+  if (!connection.loopback) { reply(fd, 403, "Forbidden"); return; }
+  if (command == "ping") { reply_text(fd, 200, "OK", "ok " + std::to_string(port) + "\n"); return; }
+  if (command == "stats") {
+    std::string body;
+    for (const auto& item : stats())
+      body += item.token + " " + std::to_string(item.total) + " " + std::to_string(item.delivered) + " " +
+              std::to_string(item.requests) + " " + std::to_string(item.idle_ms) + "\n";
+    reply_text(fd, 200, "OK", body);
+    return;
+  }
+  std::string body;
+  if (method != "POST" || !read_body(fd, request, body)) { reply(fd, 400, "Bad Request"); return; }
+  if (command == "remove") {
+    while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) body.pop_back();
+    remove(body);
+    reply_text(fd, 200, "OK", "ok\n");
+    return;
+  }
+  if (command != "add") { reply(fd, 404, "Not Found"); return; }
+  std::string lines[4];
+  std::size_t at = 0;
+  for (auto& line : lines) {
+    const auto end = body.find('\n', at);
+    line = body.substr(at, end == std::string::npos ? std::string::npos : end - at);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    at = end == std::string::npos ? body.size() : end + 1;
+  }
+  Request add;
+  add.token = lines[0] == "-" ? std::string() : lines[0];
+  add.total = std::strtoull(lines[1].c_str(), nullptr, 10);
+  add.url = lines[2];
+  add.file = lines[3];
+  const bool link = (!add.url.compare(0, 8, "https://") || !add.url.compare(0, 7, "http://")) && add.url.size() < 4000 &&
+                    add.url.find_first_of(" \t\r\n") == std::string::npos;
+  if (!add.total || !link) { reply_text(fd, 400, "Bad Request", "expected a token, a size, an http(s) link and a name\n"); return; }
+  Served out;
+  std::string error;
+  bool ok;
+  {
+    std::lock_guard lock(mutex);
+    ok = add_locked(add, out, error);
+  }
+  if (!ok) { reply_text(fd, 500, "Internal Server Error", error + "\n"); return; }
+  reply_text(fd, 200, "OK", "token=" + out.token + "\nurl=" + out.url + "\nlocal=" + out.local_url + "\nport=" + std::to_string(out.port) + "\n");
+}
+
 void serve_connection(Connection& connection) {
   name_thread("pkg-proxy");
   const int fd = connection.fd;
@@ -170,6 +274,10 @@ void serve_connection(Connection& connection) {
   if (second_space == std::string::npos || second_space > line_end) { reply(fd, 400, "Bad Request"); return; }
   const std::string method = request.substr(0, first_space);
   const std::string path = request.substr(first_space + 1, second_space - first_space - 1);
+  if (!control.empty() && !path.compare(0, 10 + control.size(), "/control/" + control + "/")) {
+    serve_control(connection, method, path.substr(10 + control.size()), request);
+    return;
+  }
   // "/<token>/<file>.pkg"
   const auto slash = path.find('/', 1);
   const std::string token = path.size() > 1 && slash != std::string::npos ? path.substr(1, slash - 1) : std::string();
@@ -182,6 +290,7 @@ void serve_connection(Connection& connection) {
   if (!link) { reply(fd, 404, "Not Found"); return; }
   const unsigned seen = ++link->requests;
   link->last = ticks();
+  touched = ticks();
   const std::string range = header(request, "range");
   // The token is the link's only secret: its first eight characters are enough to tell links apart.
   const std::string name = token.substr(0, 8);
@@ -257,7 +366,9 @@ void accept_loop() {
   while (!stopping) {
     pollfd ready{listener, POLLIN, 0};
     if (poll(&ready, 1, 250) <= 0) continue;
-    const int fd = accept(listener, nullptr, nullptr);
+    sockaddr_in peer{};
+    socklen_t peer_length = sizeof peer;
+    const int fd = accept(listener, reinterpret_cast<sockaddr*>(&peer), &peer_length);
     if (fd < 0) continue;
 #ifdef SO_NOSIGPIPE
     const int on = 1;
@@ -269,6 +380,7 @@ void accept_loop() {
     if (stopping || connections.size() >= kMaxConnections) { reply(fd, 503, "Service Unavailable", "Retry-After: 1\r\n"); close(fd); continue; }
     auto connection = std::make_unique<Connection>();
     connection->fd = fd;
+    connection->loopback = peer.sin_family == AF_INET && (ntohl(peer.sin_addr.s_addr) >> 24) == 127;
     Connection* raw = connection.get();
     // TLS to the origin and libcurl's resolver want more than the console's small default stack.
     if (!raw->thread.start([raw] { serve_connection(*raw); shutdown(raw->fd, SHUT_RDWR); close(raw->fd); raw->done = true; }, 1024 * 1024)) {
@@ -307,6 +419,7 @@ bool listen_on(std::uint16_t wanted, std::string& error) {
   listener = fd;
   port = ntohs(address.sin_port);
   stopping = false;
+  touched = ticks();
   if (!acceptor.start(accept_loop, 256 * 1024)) {
     error = "Cannot start the proxy thread.";
     close(fd);
@@ -374,21 +487,19 @@ bool serve(const Request& request, Served& out, std::string& error) {
   if (!request.total) { error = "the package size is unknown"; return false; }
   std::lock_guard lock(mutex);
   if (!listen_on(request.port, error)) return false;
-  std::string token = request.token;
-  if (!valid_token(token) && !new_token(token)) { error = "no random bytes for the link's token"; return false; }
-  auto link = std::make_shared<Link>();
-  link->url = request.url;
-  link->total = request.total;
-  link->last = ticks();
-  links[token] = link;
-  const std::string path = ":" + std::to_string(port) + "/" + token + "/" + plain(request.file);
-  const std::string lan = lan_address();
-  out.url = lan.empty() ? std::string() : "http://" + lan + path;
-  out.local_url = "http://127.0.0.1" + path;
-  out.token = token;
-  out.port = port;
-  log(token.substr(0, 8) + " serving " + std::to_string(request.total) + " bytes at " + (lan.empty() ? "127.0.0.1 only" : lan));
+  return add_locked(request, out, error);
+}
+
+bool start(std::uint16_t wanted, const std::string& secret, std::uint16_t& bound, std::string& error) {
+  std::lock_guard lock(mutex);
+  control = secret;
+  if (!listen_on(wanted, error)) return false;
+  bound = port;
   return true;
+}
+
+std::uint64_t idle_ms() {
+  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::duration(ticks() - touched)).count());
 }
 
 std::vector<Stats> stats() {

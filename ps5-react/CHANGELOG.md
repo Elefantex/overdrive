@@ -8,7 +8,10 @@
   only the `GET`), so the console refused it with `0x80B22403`. The app answers the `HEAD` from the
   size it read and fetches each `GET` range from the origin. The link works while the app runs; a
   later session serves the same URL again from its token and port. `Packages.proxyStats()` reports
-  what the console fetched of each link, `Packages.proxyRemove(token)` forgets one. A checkpoint's identity no longer includes the storage root's device and
+  what the console fetched of each link, `Packages.proxyRemove(token)` forgets one.
+- `Packages.startHelper({port, secret, log})` runs that server as `pkg-helper.elf`, a payload sent
+  to the loader on 9021 that outlives the app, controlled over HTTP from 127.0.0.1 only: the
+  console's own Downloads keep fetching a package after the app has closed. A checkpoint's identity no longer includes the storage root's device and
   inode, which a USB drive changes at every boot; a checkpoint written with the old identity still
   resumes.
 

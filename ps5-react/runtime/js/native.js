@@ -557,6 +557,21 @@ export const Packages = Object.freeze({
   proxyRemove(token) {
     host().packages.proxyRemove(token);
   },
+  /**
+   * Starts the same server as a payload of its own (PS5 only, through the loader on 9021), which keeps
+   * serving after the app closes. Resolves to `{port}`; the app then adds links to it over HTTP at
+   * `http://127.0.0.1:<port>/control/<secret>/` (docs/NATIVE-API.md). `log` is the file it writes.
+   */
+  async startHelper({port = 0, secret, log = ''}) {
+    const id = host().packages.startHelper(port, secret, log);
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const done = host().packages.pollHelper().find(item => item.id === id);
+      if (!done) continue;
+      if (done.state === 'ready') return {port: done.port};
+      throw new Error(`Packages.startHelper: ${done.error}`);
+    }
+  },
 });
 
 /**

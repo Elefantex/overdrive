@@ -105,6 +105,30 @@ JSValue proxy_stats(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   }
   return out;
 }
+// ABI v21: (port, secret, log) -> task id of the helper payload's start; pollHelper() gives its end.
+JSValue start_helper(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  std::uint32_t port = 0;
+  if (argc < 2 || JS_ToUint32(ctx, &port, argv[0]) || port > 65535)
+    return JS_ThrowTypeError(ctx, "packages.startHelper: expected a port (0..65535) and a secret");
+  std::string error;
+  const auto id = packages::start_helper(port, string_argument(ctx, argc, argv, 1), string_argument(ctx, argc, argv, 2), error);
+  if (!id) return JS_ThrowPlainError(ctx, "packages.startHelper: %s", error.c_str());
+  return JS_NewUint32(ctx, id);
+}
+// [{id, state: "ready" | "failed", port, error}] for each start that ended since the last poll.
+JSValue poll_helper(JSContext* ctx, JSValueConst, int, JSValueConst*) {
+  JSValue out = JS_NewArray(ctx);
+  std::uint32_t index = 0;
+  for (const auto& item : packages::poll_helper()) {
+    JSValue entry = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, entry, "id", JS_NewUint32(ctx, item.id));
+    JS_SetPropertyStr(ctx, entry, "state", JS_NewString(ctx, item.state.c_str()));
+    JS_SetPropertyStr(ctx, entry, "port", JS_NewUint32(ctx, item.port));
+    JS_SetPropertyStr(ctx, entry, "error", JS_NewString(ctx, item.error.c_str()));
+    JS_SetPropertyUint32(ctx, out, index++, entry);
+  }
+  return out;
+}
 JSValue proxy_remove(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   pkg_proxy::remove(string_argument(ctx, argc, argv, 0));
   return JS_UNDEFINED;
@@ -139,6 +163,8 @@ JSValue ps5_react_package_api(JSContext* ctx) {
   JS_SetPropertyStr(ctx, api, "proxy", JS_NewCFunction(ctx, proxy, "proxy", 5));
   JS_SetPropertyStr(ctx, api, "proxyStats", JS_NewCFunction(ctx, proxy_stats, "proxyStats", 0));
   JS_SetPropertyStr(ctx, api, "proxyRemove", JS_NewCFunction(ctx, proxy_remove, "proxyRemove", 1));
+  JS_SetPropertyStr(ctx, api, "startHelper", JS_NewCFunction(ctx, start_helper, "startHelper", 3));
+  JS_SetPropertyStr(ctx, api, "pollHelper", JS_NewCFunction(ctx, poll_helper, "pollHelper", 0));
   JS_SetPropertyStr(ctx, api, "cancel", JS_NewCFunction(ctx, cancel, "cancel", 1));
   JS_SetPropertyStr(ctx, api, "poll", JS_NewCFunction(ctx, poll, "poll", 0));
   return api;

@@ -260,6 +260,14 @@ def main():
          ROOT / "native/ps5/payloads/browser_capture.c", browser / "browser_platform.c",
          browser / "browser_scan.c", browser / "browser_match.c", browser / "browser_url.c", "-lkernel_sys"],
         env=env, log=BUILD / "browser-capture.log")
+    # The package server as a payload of its own: the console keeps fetching a streamed PKG after the
+    # app has closed (native/ps5/payloads/pkg_helper.cpp), with the app's own curl and OpenSSL.
+    helper = BUILD / "pkg-helper.elf"
+    if network_ports:
+        run([sdk / "bin/prospero-clang++", "-std=c++20", "-O2", "-fexceptions", "-Wall", "-Wextra",
+             "-I", network_ports / "include", "-o", helper,
+             ROOT / "native/ps5/payloads/pkg_helper.cpp", ROOT / "native/shared/pkg_proxy.cpp", *network_libs, builtins],
+            env=env, log=BUILD / "pkg-helper.log")
     if args.compile_only:
         print(f"PS5 ELF linked: {elf}; no application package generated")
         return
@@ -272,6 +280,8 @@ def main():
     run([sdk / "bin/prospero-strip", "-o", app / "rar-extract.elf", rar_extract], env=env)
     shutil.copy2(relauncher, app / "relauncher.elf")
     shutil.copy2(capture, app / "browser-capture.elf")
+    (app / "pkg-helper.elf").unlink(missing_ok=True)
+    if network_ports: run([sdk / "bin/prospero-strip", "-o", app / "pkg-helper.elf", helper], env=env)
     param = json.loads((hui / "sce_sys/param.json").read_text())
     if refresh_rate_mask(config) & 2:
         param["attribute3"] = param.get("attribute3", 0) | 0x80040  # The console grants 120 Hz output only with these bits.

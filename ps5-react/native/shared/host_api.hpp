@@ -92,6 +92,9 @@
 //                                  the app runs; an earlier token and port ask for the same link (pkg_proxy.hpp)
 //   packages.proxyStats()          [{token, total, delivered, requests, idleMs}] of the links served
 //   packages.proxyRemove(token)    forgets one link
+//   packages.startHelper(port, secret, log) ABI v21; task ID: sends pkg-helper.elf, the same server as a
+//                                  payload that outlives the app, to the loader on 9021 (PS5 only)
+//   packages.pollHelper()          [{id, state: 'ready' | 'failed', port, error}] of starts that ended
 //   packages.cancel(id)            stops reporting; an install the console accepted carries on
 //   packages.poll()                state/error/contentId/status/written/total; consumes terminal results
 //   network.version()              transport version string

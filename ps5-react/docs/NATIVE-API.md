@@ -570,6 +570,17 @@ idleMs}` for each link (`delivered` counts body bytes sent, a range asked twice
 twice) and `Packages.proxyRemove(token)` forgets one. Its first requests and any
 origin error are logged as `pkg-proxy:` lines.
 
+`Packages.startHelper({port, secret, log})` (ABI v21, PS5 only) runs the same
+server as a payload of its own, `pkg-helper.elf`, sent to the loader on
+`127.0.0.1:9021`, so the console's queue keeps fetching after the app closes. It
+resolves to `{port}`; the app then adds links to the helper and reads them over
+HTTP at `http://127.0.0.1:<port>/control/<secret>/` (`ping`, `stats`, `add`,
+`remove`; see `native/shared/pkg_proxy.hpp`), which answers only to the console
+itself. A later session reaches the same helper on the same port and secret. The
+helper writes `log`, uses the app's certificate store, resolves names over
+DNS-over-HTTPS, and ends once every link was fetched whole and nothing asked for
+ten minutes, or nothing asked for an hour.
+
 ## Archive extraction
 
 ```js

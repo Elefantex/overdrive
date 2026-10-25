@@ -34,6 +34,16 @@ struct Stats {
 };
 // Starts the server on first use and adds the link; false with `error` set when it cannot listen.
 bool serve(const Request& request, Served& out, std::string& error);
+// Starts the server on `port` (0: any) with control commands under /control/<secret>/, answered to
+// 127.0.0.1 only: the helper payload is started this way, and the app adds links to it, reads their
+// progress and removes them over HTTP, also from a session that started after the helper did.
+//   GET  /control/<secret>/ping    "ok <port>"
+//   GET  /control/<secret>/stats   one line per link: "<token> <total> <delivered> <requests> <idle ms>"
+//   POST /control/<secret>/add     body "<token or ->\n<total>\n<url>\n<file>": "token=…\nurl=…\nlocal=…\nport=…"
+//   POST /control/<secret>/remove  body "<token>"
+bool start(std::uint16_t port, const std::string& secret, std::uint16_t& bound, std::string& error);
+// Milliseconds since any link was last asked for, or since the server started.
+std::uint64_t idle_ms();
 // What the console has fetched of each link: body bytes sent, which a range asked twice counts twice.
 std::vector<Stats> stats();
 // Forgets one link; the console's next request for it is answered 404.

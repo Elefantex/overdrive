@@ -13,6 +13,7 @@ import { LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.js';
 import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
 import { driveShortName, storageRoots } from '../state/downloads.js';
+import { MODES, setPkgMode, usePkgMode } from '../state/pkg-mode.js';
 import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
   var nameOf = (code) => LOCALES.find((locale2) => locale2.code === code).name;
@@ -101,6 +102,25 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
       /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [null, ...roots].map((value) => /* @__PURE__ */ (0, jsx)(DiskSegment, { root: value, chosen: value === root2, label: value ? driveShortName(value) : t2("settings.diskAuto") }, value ?? "auto")) })
     ] });
   }
+  // Where a PKG downloads (pkg-mode.js): asked each time, in the background on the PS5, or in Overdrive.
+  function PkgModeSegment({ mode, chosen }) {
+    const t2 = useT();
+    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:pkg:${mode}`, onPress: () => setPkgMode(mode), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
+      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: t2(`settings.pkgMode.${mode}`) })
+    ] });
+  }
+  function PkgMode() {
+    const t2 = useT();
+    const mode = usePkgMode();
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
+      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.pkgMode") }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.pkgModeDetail") })
+      ] }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: MODES.map((value) => /* @__PURE__ */ (0, jsx)(PkgModeSegment, { mode: value, chosen: value === mode }, value)) })
+    ] });
+  }
   // The vibration level (issue #32), laid out like the speed limit: every step in view, Cross picks.
   var levelName = (t2, level) => level ? formatPercent2(level) : t2("settings.vibrationOff");
   function VibrationSegment({ level, chosen }) {
@@ -161,6 +181,7 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
                     /* @__PURE__ */ (0, jsx)(SpeedLimit, {}),
                     /* @__PURE__ */ (0, jsx)(DiskForDownloads, {}),
                     /* @__PURE__ */ (0, jsx)(DeletePackages, {}),
+                    /* @__PURE__ */ (0, jsx)(PkgMode, {}),
                     /* @__PURE__ */ (0, jsx)(SectionLabel, { title: t2("settings.controller") }),
                     /* @__PURE__ */ (0, jsx)(VibrationLevel, {})
                   ]

@@ -28,7 +28,8 @@ import { glide } from '../ui/ProgressBar.jsx';
 import { ShimmerText } from '../ui/ShimmerText.jsx';
 import { Shine } from '../ui/Shine.jsx';
 import { EASE_OUT } from '../ui/ease.js';
-import { DownloadFormats, Text, View, motion } from '@ps5-react/core';
+import { pkgMode } from '../state/pkg-mode.js';
+import { DownloadFormats, Platform, Text, View, motion } from '@ps5-react/core';
 
   var WIDTH6 = 272;
   var GB2 = 1e9;
@@ -70,11 +71,21 @@ import { DownloadFormats, Text, View, motion } from '@ps5-react/core';
     const status = lacking ? "no-space" : stale ? "stale" : download.status;
     // A new download first shows what the chosen source is and how to use it (DownloadTipsDialog);
     // resuming, installing or pausing one already queued goes straight on.
+    // A PKG goes to the PS5's own Downloads, in the background, or stays in Overdrive: the player says
+    // which before it starts, or once for every PKG (pkg-mode.js). A file that may turn out to be a PKG
+    // (a ".binary") follows what was remembered, and tries the console first otherwise.
+    const startNew = () => {
+      const mode = pkgMode();
+      const pkg = Platform.OS === "ps5" && ["pkg", "fpkg"].includes(String(release?.format || "").toLowerCase()) && !release?.parts;
+      if (pkg && mode === "ask") onRequestDialog({ kind: "stream", game, release, submit: (choice) => download.advance(choice) });
+      else download.advance(mode === "overdrive" ? "here" : mode === "console" ? "console" : void 0);
+    };
     const begin = () => {
       if (stale) restart();
       else if (lacking) return;
       // A homebrew app has one source, its developer's GitHub release: the tips are about choosing hosts.
-      else if (status === "idle" && release && !game.homebrew) onRequestDialog({ kind: "tips", game, release, submit: () => download.advance(), changeSource: () => chooseSource() });
+      else if (status === "idle" && release && !game.homebrew) onRequestDialog({ kind: "tips", game, release, submit: startNew, changeSource: () => chooseSource() });
+      else if (status === "idle") startNew();
       else download.advance();
     };
     const { openEdition, focusLater, push } = useNavActions();
