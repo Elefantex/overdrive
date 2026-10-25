@@ -277,7 +277,19 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
       }
     }
     function stallWatch(job2, task) {
-      let moved = Date.now(), best = -1;
+      const began = Date.now();
+      let moved = began, best = -1, gaps = [];
+      // A gateway that sends a few seconds and then asks a minute's wait, over and over, never stays
+      // quiet for the stall time: FileKeeper's edge01.fetchio.cc sent 6-8 s at 30 MB/s, then HTTP 503
+      // with Retry-After 60, and averaged 2.7 MB/s for 106 minutes (issue #77, Elefantex's log). A
+      // transfer idle for three quarters of the last 300 s (with the stall time at 90 s) is restarted too.
+      const idleWindow = stallMs * 10 / 3, idleGap = stallMs * 2 / 9;
+      const restart = (relink, line) => {
+        console.log(`[download-queue] ${job2.id}: ${line}${relink ? ", with a new link from the source" : ""}`);
+        if (relink) delete job2.options;
+        active2.restarting = true;
+        task.cancel();
+      };
       return (progress) => {
         const bytes = (progress.received || 0) + (progress.completedBytes ?? progress.written ?? 0);
         // Only a new high counts: a range the engine retries drops `received` back to what the file
@@ -288,8 +300,19 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
             console.log(`[download-queue] ${job2.id}: receiving again after ${job2.stalls} restart(s)`);
             delete job2.stalls;
           }
+          const now = Date.now();
+          if (best >= 0 && now - moved >= idleGap) gaps.push({ at: now, gap: now - moved });
+          gaps = gaps.filter((item) => now - item.at < idleWindow);
           best = bytes;
-          moved = Date.now();
+          moved = now;
+          const idle = gaps.reduce((sum, item) => sum + item.gap, 0);
+          if (active2?.restarting || now - began < idleWindow || idle < idleWindow * 0.75 || !restartsAfterStall(job2)) return;
+          if ((job2.idleRestarts || 0) >= STALL_RESTARTS) return;
+          job2.idleRestarts = (job2.idleRestarts || 0) + 1;
+          // Every second one asks FileKeeper's form for a new link: whether a fresh link or a fresh
+          // transfer is what the gateway wants is not known yet, and app.log shows which one helped.
+          const relink = job2.idleRestarts % 2 === 0 && sourceKind(job2.release) === "filekeeper";
+          restart(relink, `idle ${Math.round(idle / 1e3)} s of the last ${Math.round(idleWindow / 1e3)} s in bursts and waits (${gaps.length} waits); restart ${job2.idleRestarts} of ${STALL_RESTARTS}`);
           return;
         }
         if (active2?.restarting || Date.now() - moved < stallMs || !["connecting", "downloading"].includes(progress.state) || !restartsAfterStall(job2)) return;
@@ -297,10 +320,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         job2.stalls = (job2.stalls || 0) + 1;
         // Only FileKeeper's link comes from a form the app posts again; DataNodes' needs the browser.
         const relink = job2.stalls % 3 === 0 && sourceKind(job2.release) === "filekeeper";
-        console.log(`[download-queue] ${job2.id}: nothing received for ${Math.round((Date.now() - moved) / 1e3)} s (connections ${progress.connections || 0}, retries ${progress.retries || 0}); restart ${job2.stalls} of ${STALL_RESTARTS}${relink ? ", with a new link from the source" : ""}`);
-        if (relink) delete job2.options;
-        active2.restarting = true;
-        task.cancel();
+        restart(relink, `nothing received for ${Math.round((Date.now() - moved) / 1e3)} s (connections ${progress.connections || 0}, retries ${progress.retries || 0}); restart ${job2.stalls} of ${STALL_RESTARTS}`);
       };
     }
     function reresolve(job2) {

@@ -128,3 +128,41 @@ test('a source that is not the gateway waits out a quiet patch', async () => {
   assert.notEqual(queue.snapshot().find(item => item.id === id).state, 'failed');
   queue.pause(id);
 });
+
+// Elefantex's app.log: FileKeeper's edge01.fetchio.cc gateway sends a few seconds, then answers 503
+// with Retry-After 60, again and again. No gap reaches the stall time, yet the download is idle most
+// of the time; that counts as a stall too.
+test('a gateway that sends in short bursts between long waits is restarted', async () => {
+  const machine = console_();
+  let transfers = 0;
+  const lines = [];
+  const original = console.log;
+  console.log = (...parts) => lines.push(parts.join(' '));
+  try {
+    const enqueue = () => transfer((emit, finish) => {
+      let received = 0;
+      if (++transfers === 1) {
+        const start = Date.now();
+        // Bytes for 20 ms of every 150: each wait is well under the stall time, and together they
+        // are most of it. Timed by the clock, since timers on some systems tick every 15 ms.
+        return setInterval(() => {
+          if ((Date.now() - start) % 150 < 20) received += 10;
+          emit({state: 'downloading', received, completedBytes: 0, total: 1000});
+        }, 5).unref();
+      }
+      return setInterval(() => {
+        received += 100;
+        if (received >= 1000) finish();
+        else emit({state: 'downloading', received, completedBytes: 0, total: 1000});
+      }, 5).unref();
+    });
+    const queue = boot(machine, enqueue, {stallMs: 300});
+    const id = queue.enqueue(game, release('https://filekeeper.net/file/abc'), ROOT);
+    const job = await settled(queue, id, ['installer-required', 'failed']);
+    assert.equal(job.state, 'installer-required', job.error);
+  } finally {
+    console.log = original;
+  }
+  assert.equal(transfers, 2);
+  assert.ok(lines.some(line => line.includes('in bursts and waits') && line.includes('restart 1 of 10')), lines.join('\n'));
+});
