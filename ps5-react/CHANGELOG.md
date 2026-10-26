@@ -10,13 +10,27 @@
   DHT or web seed, so a magnet with neither trackers nor peers fails with that reason.
 - `Torrents.setSeeding(enabled)` turns seeding off for every job; a finished torrent seeds only
   while the setting is on and the app stays open. The app shows the swarm's health on the
-  download row and offers the setting in Settings, and its torrent downloads no longer go through
-  an external qBittorrent WebUI or a debrid service: those modules, their dialogs and tests are
-  gone.
+  download row and offers the setting in Settings; the debrid and WebUI sources stay available
+  beside the in-app torrent engine.
 - `Torrents.download` resolves `destination` and `torrentPath` the way every other native call
   does, so the app's paths (`/download0/...`, `/app0/...`) reach the desktop preview's sandbox.
   A preview download used to take `/download0` literally and fail with "could not create the
   destination's folder"; the console, where those paths are real mounts, was unaffected.
+
+## Unreleased — package links served by the app
+
+- `Packages.proxy({url, total, file, token, port})` (ABI v21) serves `url` for the console's
+  download queue on the console's LAN address (and on `127.0.0.1`), behind a 256-bit token. The
+  console asks a link with a `HEAD` first, and a pre-signed S3 or R2 link answers it 403 (it signs
+  only the `GET`), so the console refused it with `0x80B22403`. The app answers the `HEAD` from the
+  size it read and fetches each `GET` range from the origin. The link works while the app runs; a
+  later session serves the same URL again from its token and port. `Packages.proxyStats()` reports
+  what the console fetched of each link, `Packages.proxyRemove(token)` forgets one.
+- `Packages.startHelper({port, secret, log})` runs that server as `pkg-helper.elf`, a payload sent
+  to the loader on 9021 that outlives the app, controlled over HTTP from 127.0.0.1 only: the
+  console's own Downloads keep fetching a package after the app has closed. A checkpoint's identity no longer includes the storage root's device and
+  inode, which a USB drive changes at every boot; a checkpoint written with the old identity still
+  resumes.
 
 ## Unreleased — debrid download nodes
 

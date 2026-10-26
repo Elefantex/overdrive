@@ -81,6 +81,17 @@ test('a release carries what the queue needs and nothing else', () => {
   });
 });
 
+test('a release carries the service headers and nothing it does not need', () => {
+  const plain = linkRelease({url: 'https://host/game.pkg', filename: 'game.pkg'});
+  assert.equal('headers' in plain, false);
+  const guarded = linkRelease({url: 'http://192.168.1.10:8080/api/v2/torrents/downloadFile?hash=a&file=b.pkg', filename: 'game.pkg', headers: {Authorization: 'Basic x'}, sizeBytes: 12});
+  assert.deepEqual(guarded.headers, {Authorization: 'Basic x'});
+  assert.equal(guarded.sizeBytes, 12);
+  const seen = [];
+  addLink({enqueue: (game, release, root) => seen.push({game, release, root})}, {url: 'http://192.168.1.10:8080/f.pkg', filename: 'f.pkg', headers: {Authorization: 'Basic x'}});
+  assert.deepEqual(seen[0].release.headers, {Authorization: 'Basic x'});
+});
+
 test('a magnet is a torrent named by its dn, a .torrent link by its file', () => {
   const magnet = 'magnet:?xt=urn:btih:7acf8fb590b2060dd9c3146ef770169d593433b0&dn=Debian.ISO';
   const fromMagnet = torrentRelease({magnet});

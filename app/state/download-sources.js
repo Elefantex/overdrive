@@ -87,12 +87,12 @@
       if (!response.ok && !(response.status >= 300 && response.status < 400)) throw new Error(`Provider HTTP ${response.status}.`);
       return response;
     }
-    async function direct(url, signal) {
+    async function direct(url, signal, headers) {
       webURL(url);
-      const response = await request(url, { method: "HEAD", signal });
+      const response = await request(url, { method: "HEAD", signal, headers });
       if (htmlResponse(response)) throw new BrowserRequired(url);
-      if (response.status >= 300) throw new BrowserRequired(url, "The final file redirects elsewhere. Choose another source.");
-      return { url: webURL(response.url || url).url, rejectHtml: true };
+      if (response.status >= 300) throw new BrowserRequired(url, "The final file redirects with custom headers. Choose another source.");
+      return { url: webURL(response.url || url).url, headers, rejectHtml: true };
     }
     // FileKeeper's page has no human check: a five-second countdown, then its Free Download button
     // posts op=download2 with the file's code, and the answer redirects to the file on Datanodes'
@@ -131,7 +131,9 @@
       // A torrent never reaches this resolver: the queue hands it to the engine before resolving.
       // The guard stays for a release that slipped through, with a reason instead of a broken fetch.
       if (kind === "torrent") throw new Error("This is a torrent: the app's own engine fetches it.");
-      if (kind === "direct") return { url: webURL(url).url, rejectHtml: true };
+      // A pasted link may be behind the password of the service it came from (a qBittorrent WebUI):
+      // the release then carries the headers to send with it.
+      if (kind === "direct") return { url: webURL(url).url, rejectHtml: true, headers: release.headers };
       if (kind === "manifest") throw new Error("Split manifests must be resolved by the queue.");
       // Buzzheavier's pages sit behind a Cloudflare check only a browser passes (403 to the app,
       // 2026-10-17): its file link is captured from the console's browser, as Datanodes' is.

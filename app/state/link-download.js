@@ -133,8 +133,9 @@ import { webURL } from './download-sources.js';
     return { id: LINK_GAME, title: title || FALLBACK, art: {}, releases: [] };
   }
 
-  // The release the queue downloads: its name, its link, and the format its name declares.
-  function linkRelease({ url, filename, sizeBytes, title } = {}) {
+  // The release the queue downloads: its name, its link, the format its name declares, and the
+  // headers a service needs for it (a qBittorrent's own download link is behind its password).
+  function linkRelease({ url, filename, headers, sizeBytes, title } = {}) {
     const address = webURL(url).url;
     const name = fileName(filename) || fileNameOf(address) || FALLBACK;
     return {
@@ -144,13 +145,14 @@ import { webURL } from './download-sources.js';
       format: formatOf(name),
       sizeBytes: Number.isSafeInteger(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0,
       title: title || name,
-      link: true
+      link: true,
+      ...headers && Object.keys(headers).length ? { headers } : {}
     };
   }
 
-  /** Queues a pasted link on the drive the user chose. */
-  function addLink(queue, { url, filename, sizeBytes, title, root } = {}) {
-    const release = linkRelease({ url, filename, sizeBytes, title });
+  /** Queues a pasted link (or a file a service prepared) on the drive the user chose. */
+  function addLink(queue, { url, filename, headers, sizeBytes, title, root } = {}) {
+    const release = linkRelease({ url, filename, headers, sizeBytes, title });
     return queue.enqueue(linkGame(title || release.title), release, root);
   }
 
@@ -189,4 +191,4 @@ import { webURL } from './download-sources.js';
     return queue.enqueue(linkGame(title || release.title), release, root);
   }
 
-export { addLink, addTorrent, base32Hex, fileName, fileNameOf, formatOf, linkGame, linkId, linkInput, linkRelease, magnetInfo, torrentRelease };
+export { TORRENT_FILE, addLink, addTorrent, base32Hex, fileName, fileNameOf, formatOf, linkGame, linkId, linkInput, linkRelease, magnetInfo, torrentRelease };
