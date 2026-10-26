@@ -664,5 +664,11 @@
   "settings.licensesValue": "Codice aperto",
   "settings.licensesLead": "Overdrive è software libero: queste sono le licenze dell'app e dei progetti su cui si basa.",
   "settings.licensesSide": "Avvisi inclusi",
-  "settings.licensesEmpty": "Gli avvisi non sono in questa build."
+  "settings.licensesEmpty": "Gli avvisi non sono in questa build.",
+  "game.facts.developer": "Sviluppatore",
+  "game.facts.firmware": "Firmware min.",
+  "game.facts.license": "Licenza",
+  "game.facts.sandbox": "Sandbox",
+  "game.facts.titleId": "ID del titolo",
+  "game.facts.version": "Versione"
 }
