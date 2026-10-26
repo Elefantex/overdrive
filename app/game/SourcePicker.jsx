@@ -27,7 +27,9 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
     const icon = status.tone === "ok" ? "circleCheck" : status.tone === "info" ? "package" : "alert";
     return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 9 }, children: [
       /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 18, color: tint }),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { width: 423, fontFamily: "Inter-Regular", fontSize: 20, color: tint, numberOfLines: 1, ellipsizeMode: "tail", lineHeight: 28 }, children: status.text })
+      // Two lines: the firmware note for a PS5 package runs past one line in most locales (nl: 82
+      // characters), and a cut "…" hid the version the player needs (2026-10-26).
+      /* @__PURE__ */ (0, jsx)(Text, { style: { width: 423, fontFamily: "Inter-Regular", fontSize: 20, color: tint, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 28 }, children: status.text })
     ] });
   }
   function RowFace({ icon, name, detail: detail2, size, recommended, current, cdn, status }) {
