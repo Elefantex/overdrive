@@ -43,15 +43,9 @@
 
 ## Debrid services
 
-TorBox, Real-Debrid and Premiumize fetch a file for you: pick one under **Downloads → Debrid
-services**, paste a link or a magnet, and the service downloads it on its own servers. Overdrive
-then pulls the result from the service at full speed, with the same pause, resume and install as
-any other download.
-
-Each service works with your own account: its key is typed once, from the service's card or in
-Settings, or TorBox and Real-Debrid can be linked from the phone with a QR code. The key stays on
-the console, in the app's `settings.json`, and survives updates; it is never in this repository.
-Each service keeps its own downloads, so none is ever used on another's behalf.
+TorBox, Real-Debrid and Premiumize fetch a link or a magnet for you: pick one under
+**Downloads → Debrid services**, paste the link, and the console downloads what the service
+prepares. Each uses your own account key, typed once and kept on the console.
 
 <p align="center">
   <img src=".github/readme/debrid.jpg" alt="Debrid services dialog on the Downloads page: TorBox, Real-Debrid and Premiumize, each asking for its own key" width="100%">
