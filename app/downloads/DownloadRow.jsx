@@ -144,7 +144,9 @@ import { Text, View } from '@ps5-react/core';
               detail: shown === "finishing" ? t2("downloads.writingToDisk") : null
             }
           ),
-          note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: ROW, fontFamily: "Inter-Regular", fontSize: 21, color: problem ? "#f2f2f3" : mismatch ? "#fde68a" : "#a3a3ab", numberOfLines: 1, ellipsizeMode: "tail", lineHeight: 30 }, children: note }) : null
+          // An install request or an error runs past one line, and the engine cuts what it cannot draw
+          // with "…": the note gets up to three lines instead, so the row never hides its end (2026-10-26).
+          note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: ROW, fontFamily: "Inter-Regular", fontSize: 21, color: problem ? "#f2f2f3" : mismatch ? "#fde68a" : "#a3a3ab", numberOfLines: 3, ellipsizeMode: "tail", lineHeight: 30 }, children: note }) : null
         ] }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
           infoPage ? /* @__PURE__ */ (0, jsx)(InfoButton, { id: job2.id, onPress: infoPage, onFocus, vertical: vertical("info") }) : null,
