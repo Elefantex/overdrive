@@ -34,16 +34,32 @@
 > recovered the complete source and rebuilt it.
 
 <p align="center">
-  <img src=".github/readme/discover.jpg" alt="Overdrive's Discover page, with a featured game and the Popular now row" width="100%">
+  <img src=".github/readme/discover.jpg" alt="Overdrive's Discover page: a featured game with its description, the picks beside it, and the You might like row" width="100%">
 </p>
 <p align="center">
-  <img src=".github/readme/browse.jpg" alt="Browse library: 1,845 games with filters, sorting, scores and sizes" width="49.5%">
-  <img src=".github/readme/downloads.jpg" alt="Downloads page with activity and storage for internal storage and a USB drive" width="49.5%">
+  <img src=".github/readme/browse.jpg" alt="Browse library: 2,105 games with filters, sorting, scores and sizes" width="49.5%">
+  <img src=".github/readme/downloads.jpg" alt="Downloads page with the From a link, From a torrent and Debrid services cards, activity and storage for internal storage and a USB drive" width="49.5%">
+</p>
+
+## Debrid services
+
+TorBox, Real-Debrid and Premiumize fetch a file for you: pick one under **Downloads → Debrid
+services**, paste a link or a magnet, and the service downloads it on its own servers. Overdrive
+then pulls the result from the service at full speed, with the same pause, resume and install as
+any other download.
+
+Each service works with your own account: its key is typed once, from the service's card or in
+Settings, or TorBox and Real-Debrid can be linked from the phone with a QR code. The key stays on
+the console, in the app's `settings.json`, and survives updates; it is never in this repository.
+Each service keeps its own downloads, so none is ever used on another's behalf.
+
+<p align="center">
+  <img src=".github/readme/debrid.jpg" alt="Debrid services dialog on the Downloads page: TorBox, Real-Debrid and Premiumize, each asking for its own key" width="100%">
 </p>
 
 ## Features
 
-- **1,800+ games** to discover, with **Top rated**, a hand-picked row and a featured spotlight
+- **2,100+ games** to discover, with **Top rated**, a hand-picked row and a featured spotlight
 - **Homebrew**: native PS5 apps and games from the community catalog at [prosperostore.net](https://prosperostore.net/), always up to date, installed from each developer's GitHub release
 - **Browse the whole library** with filters, sorting, scores and download sizes at a glance
 - **Downloads straight to the console**, to internal storage or any USB drive, with live speed and storage stats
