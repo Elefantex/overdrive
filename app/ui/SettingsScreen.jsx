@@ -12,6 +12,7 @@ import { LEVELS, setVibrationLevel, useVibrationLevel } from './haptics.js';
 import { LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setDeletePackages, useDeletePackages } from '../state/package-cleanup.js';
 import { setDownloadRoot, useDownloadRoot } from '../state/download-root.js';
+import { setSeeding, useSeeding } from '../state/seeding.js';
 import { driveShortName, storageRoots } from '../state/downloads.js';
 import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/core';
 
@@ -70,6 +71,28 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.deletePackagesDetail") })
       ] }),
       /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [true, false].map((value) => /* @__PURE__ */ (0, jsx)(PackagesSegment, { on: value, chosen: value === on }, String(value))) })
+    ] });
+  }
+  // Whether a finished torrent shares what it downloaded. It only ever lasts while the app is
+  // open, so the detail says so: nobody expects a console to seed overnight.
+  function SeedingSegment({ on, chosen }) {
+    const t2 = useT();
+    return /* @__PURE__ */ (0, jsxs)(View, { focusKey: `settings:seeding:${on ? "on" : "off"}`, onPress: () => setSeeding(on), style: { position: "relative", flex: 1, height: 60, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: chosen ? colors.fg : colors.surface2 }, children: [
+      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, fontWeight: 600, color: chosen ? colors.accentFg : colors.muted, numberOfLines: 1 }, children: t2(on ? "settings.on" : "settings.off") })
+    ] });
+  }
+  function TorrentSeeding() {
+    const t2 = useT();
+    const on = useSeeding();
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10, paddingHorizontal: 12, paddingTop: 4, paddingBottom: 10 }, children: [
+      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
+        /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }, children: [
+          /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 23, fontWeight: 600, color: colors.fg }, children: t2("settings.seeding") })
+        ] }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Inter-Regular", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("settings.seedingDetail") })
+      ] }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 9 }, children: [true, false].map((value) => /* @__PURE__ */ (0, jsx)(SeedingSegment, { on: value, chosen: value === on }, String(value))) })
     ] });
   }
   // The drive downloads go to (issue #103), laid out like the speed limit: every drive in view,
@@ -160,6 +183,7 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
                     /* @__PURE__ */ (0, jsx)(SectionLabel, { icon: "download", title: t2("settings.downloads") }),
                     /* @__PURE__ */ (0, jsx)(SpeedLimit, {}),
                     /* @__PURE__ */ (0, jsx)(DiskForDownloads, {}),
+                    /* @__PURE__ */ (0, jsx)(TorrentSeeding, {}),
                     /* @__PURE__ */ (0, jsx)(DeletePackages, {}),
                     /* @__PURE__ */ (0, jsx)(SectionLabel, { title: t2("settings.controller") }),
                     /* @__PURE__ */ (0, jsx)(VibrationLevel, {})

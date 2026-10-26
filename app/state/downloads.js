@@ -8,7 +8,8 @@ import { createSourceResolver } from './download-sources.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { consoleRoots } from './roots.js';
 import { createShadowMountProbe } from './shadowmount.js';
-import { Archives, BrowserCapture, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Platform, Power } from '@ps5-react/core';
+import { Archives, BrowserCapture, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Platform, Power, Torrents } from '@ps5-react/core';
+import { seedingEnabled } from './seeding.js';
 
   var instance;
   var mocked = () => Platform.OS !== "ps5" && FileSystem.exists(`${FileSystem.dataDir}/overdrive/mock-downloads`);
@@ -28,6 +29,8 @@ import { Archives, BrowserCapture, DownloadFormats, Downloads, FileSystem, Http,
     sources: createSourceResolver({ http: Http }),
     packages: Packages,
     browserCapture: BrowserCapture,
+    torrents: Torrents,
+    seeding: seedingEnabled,
     releasesOf: (id) => getGame(id)?.releases || []
   }));
   var shadowMountUp = Platform.OS === "ps5" ? createShadowMountProbe({ http: Http, now: Date.now }) : async () => true;

@@ -8,6 +8,7 @@
 #include "removals.hpp"
 #include "browser_capture.hpp"
 #include "lan.hpp"
+#include "torrent_engine.hpp"
 #include "app_config.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
@@ -184,9 +185,10 @@ struct Host {
     archives::stop();
     browser_capture::stop();
     lan::stop();
-  packages::stop();
-  removals::stop();
-  network::stop();
+    torrent::stop();
+    packages::stop();
+    removals::stop();
+    network::stop();
     video_layers::stop();
     if (runtime_started) er_runtime_shutdown();
     text_shaper::shutdown();
