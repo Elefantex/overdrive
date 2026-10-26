@@ -48,7 +48,7 @@ TorBox, Real-Debrid and Premiumize fetch a link or a magnet for you: pick one un
 prepares. Each uses your own account key, typed once and kept on the console.
 
 <p align="center">
-  <img src=".github/readme/debrid.jpg" alt="Debrid services dialog on the Downloads page: TorBox, Real-Debrid and Premiumize, each asking for its own key" width="100%">
+  <img src=".github/readme/debrid.webp" alt="Debrid services dialog on the Downloads page: TorBox, Real-Debrid and Premiumize, each asking for its own key" width="70%">
 </p>
 
 ## Features
